@@ -254,9 +254,16 @@ class BankDatabase:
                     if cur_u["phone_verified"]:
                         raise ValueError(f"User with user_id, email, or phone is already registered.")
 
-                # Generate masked account number e.g. (...4821)
-                import random
-                acct_num = f"Advantage Checking (...{random.randint(1000, 9999)})"
+                # Generate fictional bank identifiers (clearly NOT real US banking numbers)
+                # Risk Shield Bank routing format: 999XXXXXXXX (fictional 999 prefix — no US bank uses 999)
+                import random, hashlib as _hl
+                routing_suffix = f"{random.randint(10,99)}{random.randint(1000,9999)}"
+                routing_number = f"999{routing_suffix}"
+                full_acct_raw = f"{random.randint(10000000000, 99999999999)}"
+                acct_last4 = full_acct_raw[-4:]
+                acct_num_masked = f"Advantage Checking (...{acct_last4})"
+                # Customer ID = RS + 8-char hex of user_id hash
+                customer_id = "RS" + _hl.md5(uid.encode()).hexdigest()[:8].upper()
 
                 # Insert or replace unverified
                 conn.execute("""
@@ -265,24 +272,28 @@ class BankDatabase:
                 """, (full_name.strip(), uid, password_hash, salt, em, ph, ph_digits, location, now))
                 new_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
 
-                # Check if account already exists
+                # Create bank account if not already existing
                 cur_acc = conn.execute("SELECT id FROM bank_accounts WHERE user_id = ?", (new_id,)).fetchone()
                 if not cur_acc:
                     conn.execute("""
                         INSERT INTO bank_accounts (user_id, account_number_masked, account_type, available_balance, account_status, created_at)
-                        VALUES (?, ?, 'CHECKING', 14250.00, 'ACTIVE', ?)
-                    """, (new_id, acct_num, now))
+                        VALUES (?, ?, 'CHECKING', 0.00, 'ACTIVE', ?)
+                    """, (new_id, acct_num_masked, now))
 
                 return {
                     "id": new_id,
                     "user_id": uid,
+                    "customer_id": customer_id,
                     "full_name": full_name,
                     "email": em,
                     "phone": ph,
                     "masked_email": mask_email_str(em),
                     "masked_phone": mask_phone_str(ph),
-                    "account_number": acct_num,
-                    "balance": 14250.00
+                    "account_number_masked": acct_num_masked,
+                    "account_number": full_acct_raw,
+                    "routing_number": routing_number,
+                    "account_type": "Advantage Checking",
+                    "balance": 0.00
                 }
         finally:
             conn.close()

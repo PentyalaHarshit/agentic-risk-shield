@@ -118,8 +118,13 @@ class AuthService:
 
         return {
             "user_id": uid,
+            "customer_id": db_user.get("customer_id", ""),
             "masked_email": db_user["masked_email"],
             "masked_phone": db_user["masked_phone"],
+            "account_number_masked": db_user.get("account_number_masked", ""),
+            "account_number": db_user.get("account_number", ""),
+            "routing_number": db_user.get("routing_number", ""),
+            "account_type": db_user.get("account_type", "Advantage Checking"),
             "demo_otp_preview": otp_code,  # Provided for convenience in testing environment
             "message": f"Verification code sent to {db_user['masked_email']} and {db_user['masked_phone']}"
         }
@@ -127,7 +132,8 @@ class AuthService:
     @staticmethod
     def verify_otp(user_id: str, code: str) -> Dict:
         uid = user_id.strip().lower()
-        if uid not in USERS_DB:
+        user = BankDatabase.get_user_by_id(uid)
+        if not user:
             raise ValueError("User not found.")
 
         otp_info = ACTIVE_OTPS.get(uid)

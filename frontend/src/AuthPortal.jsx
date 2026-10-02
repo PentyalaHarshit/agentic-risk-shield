@@ -1,1342 +1,559 @@
 import React, { useState, useEffect, useRef } from "react";
+import HumanVisionDetector from "./HumanVisionDetector";
 
 const DIRECTIONS = [
-  {
-    id: "center",
-    title: "1. Look Center",
-    label: "Look Straight Ahead",
-    icon: "👤",
-    instruction: "Align your face directly inside the oval reticle facing forward."
-  },
-  {
-    id: "left",
-    title: "2. Turn Left",
-    label: "Turn Head Left",
-    icon: "👤 ←",
-    instruction: "Slowly turn your head to the LEFT so the system maps your profile contour."
-  },
-  {
-    id: "right",
-    title: "3. Turn Right",
-    label: "Turn Head Right",
-    icon: "→ 👤",
-    instruction: "Slowly turn your head to the RIGHT to capture your right-side biometric angles."
-  },
-  {
-    id: "up_down",
-    title: "4. Look Up / Down",
-    label: "Tilt Up & Down",
-    icon: "↑ 👤 ↓",
-    instruction: "Tilt your head slightly UP and then DOWN for depth & pitch verification."
-  }
+  { id: "center", title: "1. Look Center", label: "Look Straight Ahead", icon: "👤", instruction: "Align your face directly inside the oval reticle facing forward." },
+  { id: "left", title: "2. Turn Left", label: "Turn Head Left", icon: "👤 ←", instruction: "Slowly turn your head to the LEFT so the system maps your profile contour." },
+  { id: "right", title: "3. Turn Right", label: "Turn Head Right", icon: "→ 👤", instruction: "Slowly turn your head to the RIGHT to capture your right-side biometric angles." },
+  { id: "up_down", title: "4. Look Up / Down", label: "Tilt Up & Down", icon: "↑ 👤 ↓", instruction: "Tilt your head slightly UP and then DOWN for depth & pitch verification." }
 ];
 
+const REG_STEPS = [
+  { id: 1, label: "Personal Info", icon: "👤" },
+  { id: 2, label: "Login Details", icon: "🔐" },
+  { id: 3, label: "Contact Info", icon: "📱" },
+  { id: 4, label: "Verify OTP", icon: "✉️" },
+  { id: 5, label: "Face ID", icon: "📷" },
+  { id: 6, label: "Account Created", icon: "🏦" }
+];
+
+const IS = {
+  width: "100%", padding: "12px 14px", background: "rgba(0,0,0,0.45)",
+  border: "1px solid rgba(255,255,255,0.12)", borderRadius: 10, color: "#fff",
+  fontSize: 14, outline: "none", boxSizing: "border-box", transition: "border 0.2s"
+};
+const LS = {
+  display: "block", fontSize: 11, fontWeight: 700, color: "rgba(255,255,255,0.5)",
+  marginBottom: 5, textTransform: "uppercase", letterSpacing: "0.6px"
+};
+
+const FG = ({ label, children }) => (
+  <div style={{ marginBottom: 14 }}>
+    <label style={LS}>{label}</label>
+    {children}
+  </div>
+);
+
 export default function AuthPortal({ API, currentTheme, onLoginSuccess, setErr }) {
-  // Mode: "login" | "register" | "otp" | "face_enroll" | "face_login"
   const [mode, setMode] = useState("login");
   const [busy, setBusy] = useState(false);
-  const [showPassword, setShowPassword] = useState(false);
+  const [showPw, setShowPw] = useState(false);
+  const [showCPw, setShowCPw] = useState(false);
+  const [regStep, setRegStep] = useState(1);
 
-  // Forms
-  const [loginForm, setLoginForm] = useState({
-    user_id: "harshit",
-    password: "RiskShield@2026"
-  });
-
+  const [loginForm, setLoginForm] = useState({ user_id: "harshit", password: "RiskShield@2026" });
   const [regForm, setRegForm] = useState({
-    full_name: "Harshit Pentyala",
-    user_id: "harshit",
-    password: "RiskShield@2026",
-    confirm_password: "RiskShield@2026",
-    email: "harshit.pentyala@gmail.com",
-    phone: "+1 (214) 555-0192"
+    full_name: "", date_of_birth: "", address: "", city: "", state: "", zip: "",
+    user_id: "", password: "", confirm_password: "", email: "", phone: ""
   });
 
-  // OTP State
   const [otpDigits, setOtpDigits] = useState(["", "", "", "", "", ""]);
-  const [otpInfo, setOtpInfo] = useState({
-    masked_email: "h*****@gmail.com",
-    masked_phone: "+1 (214) ***-0192",
-    preview: "",
-    user_id: ""
-  });
-  const [resendCooldown, setResendCooldown] = useState(0);
-
-  // Face ID Enrollment State
-  const [enrollStep, setEnrollStep] = useState(0); // 0..3: directions, 4: complete
+  const [otpInfo, setOtpInfo] = useState({ masked_email: "", masked_phone: "", preview: "", user_id: "" });
+  const [bankProfile, setBankProfile] = useState(null);
+  const [resendCD, setResendCD] = useState(0);
+  const [enrollStep, setEnrollStep] = useState(0);
   const [completedDirs, setCompletedDirs] = useState([]);
-  const [enrollSuccessMsg, setEnrollSuccessMsg] = useState("");
+  const [faceProg, setFaceProg] = useState(0);
+  const [faceStat, setFaceStat] = useState("");
 
-  // Face Login State
-  const [faceScanProgress, setFaceScanProgress] = useState(0);
-  const [faceScanStatus, setFaceScanStatus] = useState("");
-
-  // Camera State & Refs
-  const [cameraActive, setCameraActive] = useState(false);
-  const [cameraError, setCameraError] = useState(false);
   const videoRef = useRef(null);
   const streamRef = useRef(null);
-  const otpInputsRef = useRef([]);
+  const otpRefs = useRef([]);
 
-  // Setup / teardown webcam when entering face_enroll or face_login
   useEffect(() => {
     let active = true;
-    if (mode === "face_enroll" || mode === "face_login") {
-      if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
-        navigator.mediaDevices
-          .getUserMedia({ video: { width: 480, height: 480, facingMode: "user" } })
-          .then((stream) => {
-            if (!active) {
-              stream.getTracks().forEach((t) => t.stop());
-              return;
-            }
-            streamRef.current = stream;
-            setCameraActive(true);
-            setCameraError(false);
-            if (videoRef.current) {
-              videoRef.current.srcObject = stream;
-              videoRef.current.play().catch(() => {});
-            }
-          })
-          .catch((e) => {
-            console.warn("Camera unavailable or permission denied, using vision simulator:", e);
-            setCameraError(true);
-            setCameraActive(false);
-          });
-      } else {
-        setCameraError(true);
-      }
-    } else {
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-      }
-      setCameraActive(false);
+    const needsCam = (mode === "register" && regStep === 5) || mode === "face_login";
+    if (needsCam && navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      navigator.mediaDevices.getUserMedia({ video: { width: 480, height: 480, facingMode: "user" } })
+        .then(stream => {
+          if (!active) { stream.getTracks().forEach(t => t.stop()); return; }
+          streamRef.current = stream;
+          if (videoRef.current) { videoRef.current.srcObject = stream; videoRef.current.play().catch(() => {}); }
+        }).catch(() => {});
+    } else if (streamRef.current) {
+      streamRef.current.getTracks().forEach(t => t.stop());
+      streamRef.current = null;
     }
-
     return () => {
       active = false;
-      if (streamRef.current) {
-        streamRef.current.getTracks().forEach((t) => t.stop());
-        streamRef.current = null;
-      }
+      if (streamRef.current) { streamRef.current.getTracks().forEach(t => t.stop()); streamRef.current = null; }
     };
-  }, [mode]);
+  }, [mode, regStep]);
 
-  // Face Login automated scanner simulation & verification
   useEffect(() => {
     let t1, t2, t3;
     if (mode === "face_login") {
-      setFaceScanProgress(15);
-      setFaceScanStatus("Detecting face in frame reticle...");
-
-      t1 = setTimeout(() => {
-        setFaceScanProgress(55);
-        setFaceScanStatus("Extracting 128-point biometric landmark mesh...");
-      }, 900);
-
-      t2 = setTimeout(() => {
-        setFaceScanProgress(85);
-        setFaceScanStatus("Matching biometric signature against secure enclave...");
-      }, 1900);
-
+      setFaceProg(15); setFaceStat("Detecting face in frame reticle...");
+      t1 = setTimeout(() => { setFaceProg(55); setFaceStat("Extracting 128-point biometric landmark mesh..."); }, 900);
+      t2 = setTimeout(() => { setFaceProg(85); setFaceStat("Matching biometric signature against secure enclave..."); }, 1900);
       t3 = setTimeout(async () => {
-        setFaceScanProgress(100);
-        setFaceScanStatus("✓ Biometric Match Confirmed! Authenticating...");
-        try {
-          const res = await post("/api/auth/login-face", {
-            user_id: loginForm.user_id || "harshit"
-          });
-          onLoginSuccess(res.user);
-        } catch (e) {
-          setErr("Face ID login failed: " + e.message);
-          setMode("login");
-        }
+        setFaceProg(100); setFaceStat("✓ Biometric Match Confirmed! Authenticating...");
+        try { const res = await post("/api/auth/login-face", { user_id: loginForm.user_id || "harshit" }); onLoginSuccess(res.user); }
+        catch (e) { setErr("Face ID login failed: " + e.message); setMode("login"); }
       }, 2800);
     }
-    return () => {
-      clearTimeout(t1);
-      clearTimeout(t2);
-      clearTimeout(t3);
-    };
+    return () => { clearTimeout(t1); clearTimeout(t2); clearTimeout(t3); };
   }, [mode]);
 
-  // OTP resend cooldown timer
   useEffect(() => {
-    if (resendCooldown <= 0) return;
-    const interval = setInterval(() => {
-      setResendCooldown((c) => c - 1);
-    }, 1000);
-    return () => clearInterval(interval);
-  }, [resendCooldown]);
+    if (resendCD <= 0) return;
+    const iv = setInterval(() => setResendCD(c => c - 1), 1000);
+    return () => clearInterval(iv);
+  }, [resendCD]);
 
-  // Helper HTTP POST
-  const post = async (endpoint, body) => {
-    const r = await fetch(`${API}${endpoint}`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body)
-    });
-    if (!r.ok) {
-      const errText = await r.text();
-      let msg = errText;
-      try {
-        const parsed = JSON.parse(errText);
-        msg = parsed.detail || errText;
-      } catch {}
-      throw new Error(msg);
-    }
+  const post = async (ep, body) => {
+    const r = await fetch(`${API}${ep}`, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    if (!r.ok) { const t = await r.text(); let m = t; try { m = JSON.parse(t).detail || t; } catch {} throw new Error(m); }
     return r.json();
   };
 
-  // 1. Password Login
-  const handlePasswordLogin = async (e) => {
+  const handleLogin = async e => {
     if (e) e.preventDefault();
-    if (!loginForm.user_id.trim() || !loginForm.password.trim()) {
-      setErr("Please enter both User ID and Password.");
-      return;
-    }
-    setBusy(true);
-    setErr("");
-    try {
-      const res = await post("/api/auth/login-password", {
-        user_id: loginForm.user_id,
-        password: loginForm.password
-      });
-      onLoginSuccess(res.user);
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
+    if (!loginForm.user_id.trim() || !loginForm.password.trim()) { setErr("Enter both User ID and Password."); return; }
+    setBusy(true); setErr("");
+    try { const res = await post("/api/auth/login-password", loginForm); onLoginSuccess(res.user); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
 
-  // 2. Start Registration
-  const handleRegisterSubmit = async (e) => {
+  const step1 = e => {
     if (e) e.preventDefault();
-    if (!regForm.full_name.trim() || !regForm.user_id.trim() || !regForm.password.trim()) {
-      setErr("Please fill in all required registration fields.");
-      return;
-    }
-    if (regForm.password !== regForm.confirm_password) {
-      setErr("Passwords do not match. Please verify.");
-      return;
-    }
-    setBusy(true);
-    setErr("");
+    if (!regForm.full_name.trim()) { setErr("Full legal name required."); return; }
+    if (!regForm.date_of_birth) { setErr("Date of birth required."); return; }
+    setErr(""); setRegStep(2);
+  };
+
+  const step2 = e => {
+    if (e) e.preventDefault();
+    if (regForm.user_id.length < 4) { setErr("User ID must be 4+ characters."); return; }
+    if (regForm.password.length < 8) { setErr("Password must be 8+ characters."); return; }
+    if (regForm.password !== regForm.confirm_password) { setErr("Passwords do not match."); return; }
+    setErr(""); setRegStep(3);
+  };
+
+  const step3 = async e => {
+    if (e) e.preventDefault();
+    if (!regForm.email.trim() || !regForm.phone.trim()) { setErr("Email and phone required."); return; }
+    setBusy(true); setErr("");
     try {
       const res = await post("/api/auth/register", {
-        full_name: regForm.full_name,
-        user_id: regForm.user_id,
-        password: regForm.password,
-        email: regForm.email,
-        phone: regForm.phone
+        full_name: regForm.full_name, user_id: regForm.user_id,
+        password: regForm.password, email: regForm.email, phone: regForm.phone
       });
-      setOtpInfo({
-        masked_email: res.masked_email,
-        masked_phone: res.masked_phone,
-        preview: res.demo_otp_preview,
-        user_id: res.user_id
-      });
-      setOtpDigits(["", "", "", "", "", ""]);
-      setResendCooldown(30);
-      setMode("otp");
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
+      setOtpInfo({ masked_email: res.masked_email, masked_phone: res.masked_phone, preview: res.demo_otp_preview, user_id: res.user_id });
+      setBankProfile({ customer_id: res.customer_id, account_number: res.account_number, routing_number: res.routing_number, account_type: res.account_type || "Advantage Checking" });
+      setOtpDigits(["", "", "", "", "", ""]); setResendCD(30); setRegStep(4);
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
 
-  // 3. OTP Verification
-  const handleOtpChange = (index, value) => {
-    if (!/^\d*$/.test(value)) return;
-    const newDigits = [...otpDigits];
-    newDigits[index] = value.slice(-1);
-    setOtpDigits(newDigits);
-
-    // Auto-advance to next box
-    if (value && index < 5 && otpInputsRef.current[index + 1]) {
-      otpInputsRef.current[index + 1].focus();
-    }
+  const otpChange = (i, v) => {
+    if (!/^\d*$/.test(v)) return;
+    const d = [...otpDigits]; d[i] = v.slice(-1); setOtpDigits(d);
+    if (v && i < 5 && otpRefs.current[i + 1]) otpRefs.current[i + 1].focus();
   };
 
-  const handleOtpKeyDown = (index, e) => {
-    if (e.key === "Backspace" && !otpDigits[index] && index > 0) {
-      if (otpInputsRef.current[index - 1]) {
-        otpInputsRef.current[index - 1].focus();
-      }
-    }
+  const otpKey = (i, e) => {
+    if (e.key === "Backspace" && !otpDigits[i] && i > 0 && otpRefs.current[i - 1]) otpRefs.current[i - 1].focus();
   };
 
-  const handleOtpPaste = (e) => {
-    e.preventDefault();
-    const paste = e.clipboardData.getData("text").trim();
-    if (/^\d{6}$/.test(paste)) {
-      setOtpDigits(paste.split(""));
-      if (otpInputsRef.current[5]) otpInputsRef.current[5].focus();
-    }
+  const otpPaste = e => {
+    e.preventDefault(); const p = e.clipboardData.getData("text").trim();
+    if (/^\d{6}$/.test(p)) { setOtpDigits(p.split("")); if (otpRefs.current[5]) otpRefs.current[5].focus(); }
   };
 
-  const handleVerifyOtpSubmit = async (e) => {
-    if (e) e.preventDefault();
-    const code = otpDigits.join("");
-    if (code.length !== 6) {
-      setErr("Please enter the complete 6-digit verification code.");
-      return;
-    }
-    setBusy(true);
-    setErr("");
+  const verifyOtp = async e => {
+    if (e) e.preventDefault(); const code = otpDigits.join("");
+    if (code.length !== 6) { setErr("Enter the 6-digit code."); return; }
+    setBusy(true); setErr("");
+    try { await post("/api/auth/verify-otp", { user_id: otpInfo.user_id || regForm.user_id, code }); setEnrollStep(0); setCompletedDirs([]); setRegStep(5); }
+    catch (e) { setErr(e.message); } finally { setBusy(false); }
+  };
+
+  const resend = async () => {
+    if (resendCD > 0) return; setBusy(true); setErr("");
     try {
-      await post("/api/auth/verify-otp", {
-        user_id: otpInfo.user_id || regForm.user_id,
-        code: code
-      });
-      setEnrollStep(0);
-      setCompletedDirs([]);
-      setMode("face_enroll");
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
+      const res = await post("/api/auth/resend-otp", { user_id: otpInfo.user_id || regForm.user_id });
+      setOtpInfo(p => ({ ...p, preview: res.demo_otp_preview })); setResendCD(30);
+    } catch (e) { setErr(e.message); } finally { setBusy(false); }
   };
 
-  const handleResendOtp = async () => {
-    if (resendCooldown > 0) return;
-    setBusy(true);
-    setErr("");
-    try {
-      const res = await post("/api/auth/resend-otp", {
-        user_id: otpInfo.user_id || regForm.user_id
-      });
-      setOtpInfo((prev) => ({
-        ...prev,
-        preview: res.demo_otp_preview
-      }));
-      setResendCooldown(30);
-    } catch (e) {
-      setErr(e.message);
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  // 4. Face Enrollment Directions
-  const captureDirectionPose = async () => {
-    const curDir = DIRECTIONS[enrollStep];
-    if (!curDir) return;
-
-    const nextCompleted = [...completedDirs, curDir.id];
-    setCompletedDirs(nextCompleted);
-
-    if (enrollStep < 3) {
-      setEnrollStep(enrollStep + 1);
-    } else {
-      // Step 4 reached: all 4 directions completed
-      setBusy(true);
-      setErr("");
+  const captureDir = async () => {
+    const cur = DIRECTIONS[enrollStep]; if (!cur) return;
+    const next = [...completedDirs, cur.id]; setCompletedDirs(next);
+    if (enrollStep < 3) { setEnrollStep(enrollStep + 1); } else {
+      setBusy(true); setErr("");
       try {
-        const res = await post("/api/auth/enroll-face", {
-          user_id: otpInfo.user_id || regForm.user_id,
-          directions_completed: ["center", "left", "right", "up_down"]
-        });
-        setEnrollSuccessMsg(res.message);
-        setEnrollStep(4); // Finished
-      } catch (e) {
-        setErr(e.message);
-      } finally {
-        setBusy(false);
-      }
+        await post("/api/auth/enroll-face", { user_id: otpInfo.user_id || regForm.user_id, directions_completed: ["center", "left", "right", "up_down"] });
+        setEnrollStep(4);
+        setTimeout(() => setRegStep(6), 1200);
+      } catch (e) { setErr(e.message); } finally { setBusy(false); }
     }
   };
 
-  const handleFinishEnrollment = async () => {
-    // Automatically log user in
+  const finishReg = async () => {
     setBusy(true);
-    try {
-      const res = await post("/api/auth/login-face", {
-        user_id: otpInfo.user_id || regForm.user_id
-      });
-      onLoginSuccess(res.user);
-    } catch (e) {
-      // Fallback to password login screen
-      setLoginForm({
-        user_id: otpInfo.user_id || regForm.user_id,
-        password: regForm.password
-      });
-      setMode("login");
-    } finally {
-      setBusy(false);
-    }
+    try { const res = await post("/api/auth/login-face", { user_id: otpInfo.user_id || regForm.user_id }); onLoginSuccess(res.user); }
+    catch { setLoginForm({ user_id: otpInfo.user_id || regForm.user_id, password: regForm.password }); setMode("login"); }
+    finally { setBusy(false); }
+  };
+
+  const startReg = () => {
+    setRegForm({ full_name: "", date_of_birth: "", address: "", city: "", state: "", zip: "", user_id: "", password: "", confirm_password: "", email: "", phone: "" });
+    setRegStep(1); setOtpDigits(["", "", "", "", "", ""]); setEnrollStep(0); setCompletedDirs([]); setBankProfile(null); setErr(""); setMode("register");
+  };
+
+  const PB = {
+    width: "100%", padding: "13px", background: currentTheme.primaryBtn, border: 0,
+    borderRadius: 10, color: "#fff", fontSize: 14, fontWeight: 800,
+    cursor: busy ? "not-allowed" : "pointer", boxShadow: currentTheme.primaryBtnGlow,
+    letterSpacing: "0.5px", opacity: busy ? 0.8 : 1
+  };
+
+  const GB = {
+    padding: "12px 20px", background: "rgba(255,255,255,0.05)",
+    border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10,
+    color: "rgba(255,255,255,0.6)", fontSize: 13, fontWeight: 600, cursor: "pointer"
   };
 
   return (
-    <div style={{ maxWidth: 840, margin: "0 auto" }}>
-      {/* Container with active theme */}
-      <div
-        className="animate-fade-in"
-        style={{
-          background: currentTheme.boxBg,
-          backdropFilter: "blur(24px)",
-          border: currentTheme.border,
-          borderRadius: "var(--radius-lg)",
-          boxShadow: currentTheme.boxShadow,
-          overflow: "hidden",
-          transition: "all 0.3s ease"
-        }}
-      >
-        {/* Top glowing accent ribbon stripe */}
-        <div style={{ height: 5, background: currentTheme.topRibbon, width: "100%" }} />
+    <div style={{ maxWidth: 880, margin: "0 auto" }}>
+      <div className="animate-fade-in" style={{ background: currentTheme.boxBg, backdropFilter: "blur(24px)", border: currentTheme.border, borderRadius: "var(--radius-lg)", boxShadow: currentTheme.boxShadow, overflow: "hidden" }}>
+        <div style={{ height: 4, background: currentTheme.topRibbon }} />
 
-        {/* Portal Header */}
-        <div
-          style={{
-            padding: "18px 24px 16px",
-            background: currentTheme.navBg,
-            borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between"
-          }}
-        >
+        {/* Header */}
+        <div style={{ padding: "16px 24px", background: currentTheme.navBg, borderBottom: "1px solid rgba(255,255,255,0.07)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
           <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <div
-              style={{
-                width: 44,
-                height: 44,
-                borderRadius: 12,
-                background: "linear-gradient(135deg, #0284c7, #38bdf8)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 22,
-                boxShadow: "0 0 16px rgba(56, 189, 248, 0.35)"
-              }}
-            >
-              🛡️
-            </div>
+            <div style={{ width: 40, height: 40, borderRadius: 10, background: "linear-gradient(135deg, #0284c7, #38bdf8)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, boxShadow: "0 0 16px rgba(56,189,248,0.35)" }}>🛡️</div>
             <div>
-              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                <span style={{ fontSize: 11, color: "#fff", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                  QuickPay
-                </span>
-                <span style={{ fontSize: 11, color: "var(--accent-blue)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                  + Risk Shield
-                </span>
+              <div style={{ display: "flex", gap: 6 }}>
+                <span style={{ fontSize: 10, color: "#fff", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>QuickPay</span>
+                <span style={{ fontSize: 10, color: "var(--accent-blue)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 1 }}>+ Risk Shield</span>
               </div>
-              <div style={{ fontSize: 18, fontWeight: 800, color: "#fff" }}>
+              <div style={{ fontSize: 17, fontWeight: 800, color: "#fff" }}>
                 {mode === "login" && "Sign In to Online Banking"}
-                {mode === "register" && "Create Your Account"}
-                {mode === "otp" && "Verify Your Identity"}
-                {mode === "face_enroll" && "Register Biometric Face ID"}
+                {mode === "register" && (REG_STEPS[regStep - 1]?.label || "Register")}
                 {mode === "face_login" && "Face ID Biometric Scanner"}
               </div>
             </div>
           </div>
-
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4 }}>
-            <span style={{ fontSize: 10, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
-              🔒 Bank-Grade • Human Vision • Encrypted
-            </span>
-            <span style={{ fontSize: 11, color: "var(--accent-blue)", background: "rgba(255, 255, 255, 0.06)", padding: "2px 8px", borderRadius: 8 }}>
-              {mode === "login" && "Authentication"}
-              {mode === "register" && "Step 1 of 3: Details"}
-              {mode === "otp" && "Step 2 of 3: OTP"}
-              {mode === "face_enroll" && "Step 3 of 3: Biometrics"}
-              {mode === "face_login" && "Vision AI"}
-            </span>
+          <div style={{ textAlign: "right" }}>
+            <div style={{ fontSize: 9, color: "rgba(255,255,255,0.4)", marginBottom: 4 }}>🔒 Bank-Grade Encrypted</div>
+            {mode === "register" && (
+              <div style={{ display: "flex", gap: 4 }}>
+                {REG_STEPS.map(s => (
+                  <div key={s.id} style={{ width: 22, height: 4, borderRadius: 2, background: s.id < regStep ? "#10b981" : s.id === regStep ? "#38bdf8" : "rgba(255,255,255,0.1)", transition: "background 0.3s" }} />
+                ))}
+              </div>
+            )}
           </div>
         </div>
 
-        {/* =========================================================================
-            VIEW 1: SIGN IN (PASSWORD + FACE ID)
-           ========================================================================= */}
+        {/* ===== SIGN IN ===== */}
         {mode === "login" && (
-          <div style={{ padding: "30px 28px 36px" }} className="animate-fade-in">
-            <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 32, alignItems: "start" }}>
-              {/* Left Column: User ID + Password Form */}
+          <div style={{ padding: "28px 28px 34px" }} className="animate-fade-in">
+            <div style={{ display: "grid", gridTemplateColumns: "1.15fr 0.85fr", gap: 32, alignItems: "start" }}>
               <div>
-                <h3 style={{ fontSize: 16, fontWeight: 700, color: "#fff", marginBottom: 6 }}>
-                  Sign In with User ID & Password
-                </h3>
-                <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 20 }}>
-                  Enter your online banking credentials to access your checking account and transfers.
-                </p>
-
-                <form onSubmit={handlePasswordLogin}>
-                  <div style={{ marginBottom: 16 }}>
-                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                      User ID
-                    </label>
-                    <input
-                      type="text"
-                      value={loginForm.user_id}
-                      onChange={(e) => setLoginForm({ ...loginForm, user_id: e.target.value })}
-                      placeholder="Enter your User ID"
-                      style={{
-                        width: "100%",
-                        padding: "12px 14px",
-                        background: "rgba(0, 0, 0, 0.4)",
-                        border: "1px solid var(--border-glow)",
-                        borderRadius: "var(--radius-md)",
-                        color: "#fff",
-                        fontSize: 14
-                      }}
-                    />
-                  </div>
-
-                  <div style={{ marginBottom: 20 }}>
-                    <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
-                      <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text-muted)" }}>
-                        Password
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => setShowPassword(!showPassword)}
-                        style={{ background: "transparent", border: 0, color: "var(--accent-blue)", fontSize: 11, cursor: "pointer" }}
-                      >
-                        {showPassword ? "Hide" : "Show"}
-                      </button>
+                <h3 style={{ fontSize: 15, fontWeight: 700, color: "#fff", marginBottom: 4 }}>Sign In with User ID &amp; Password</h3>
+                <p style={{ fontSize: 12, color: "rgba(255,255,255,0.45)", marginBottom: 20 }}>Access your checking account and money transfers securely.</p>
+                <form onSubmit={handleLogin}>
+                  <FG label="User ID">
+                    <input id="login-userid" type="text" value={loginForm.user_id} onChange={e => setLoginForm({ ...loginForm, user_id: e.target.value })} placeholder="Enter your User ID" style={IS} />
+                  </FG>
+                  <FG label="Password">
+                    <div style={{ position: "relative" }}>
+                      <input id="login-password" type={showPw ? "text" : "password"} value={loginForm.password} onChange={e => setLoginForm({ ...loginForm, password: e.target.value })} placeholder="Enter your password" style={{ ...IS, paddingRight: 60 }} />
+                      <button type="button" onClick={() => setShowPw(!showPw)} style={{ position: "absolute", right: 12, top: "50%", transform: "translateY(-50%)", background: "none", border: 0, color: "#38bdf8", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>{showPw ? "HIDE" : "SHOW"}</button>
                     </div>
-                    <input
-                      type={showPassword ? "text" : "password"}
-                      value={loginForm.password}
-                      onChange={(e) => setLoginForm({ ...loginForm, password: e.target.value })}
-                      placeholder="Enter your password"
-                      style={{
-                        width: "100%",
-                        padding: "12px 14px",
-                        background: "rgba(0, 0, 0, 0.4)",
-                        border: "1px solid var(--border-glow)",
-                        borderRadius: "var(--radius-md)",
-                        color: "#fff",
-                        fontSize: 14
-                      }}
-                    />
-                  </div>
-
-                  <button
-                    type="submit"
-                    disabled={busy}
-                    style={{
-                      width: "100%",
-                      padding: "14px",
-                      background: currentTheme.primaryBtn,
-                      border: 0,
-                      borderRadius: "var(--radius-md)",
-                      color: "#fff",
-                      fontSize: 14,
-                      fontWeight: 800,
-                      cursor: busy ? "not-allowed" : "pointer",
-                      boxShadow: currentTheme.primaryBtnGlow,
-                      letterSpacing: "0.5px"
-                    }}
-                  >
-                    {busy ? "Authenticating…" : "SIGN IN →"}
-                  </button>
+                  </FG>
+                  <button id="login-submit" type="submit" disabled={busy} style={PB}>{busy ? "Authenticating…" : "SIGN IN →"}</button>
                 </form>
-
-                {/* Quick Demo Pre-fill */}
-                <div style={{ marginTop: 18, background: "rgba(255, 255, 255, 0.04)", borderRadius: 8, padding: "10px 12px", border: "1px solid var(--border-subtle)" }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                    <div>
-                      <div style={{ fontSize: 11, fontWeight: 700, color: "#38bdf8" }}>⚡ Demo Account Preset:</div>
-                      <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
-                        User ID: <code style={{ color: "#fff" }}>harshit</code> • Password: <code style={{ color: "#fff" }}>RiskShield@2026</code>
-                      </div>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => setLoginForm({ user_id: "harshit", password: "RiskShield@2026" })}
-                      style={{
-                        background: "rgba(56, 189, 248, 0.2)",
-                        border: "1px solid rgba(56, 189, 248, 0.4)",
-                        borderRadius: 6,
-                        color: "#38bdf8",
-                        padding: "4px 8px",
-                        fontSize: 11,
-                        cursor: "pointer",
-                        fontWeight: 600
-                      }}
-                    >
-                      Pre-fill
-                    </button>
+                <div style={{ marginTop: 16, background: "rgba(56,189,248,0.06)", borderRadius: 8, padding: "10px 14px", border: "1px solid rgba(56,189,248,0.2)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#38bdf8", marginBottom: 2 }}>⚡ Demo Account:</div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.5)" }}>ID: <code style={{ color: "#fff" }}>harshit</code> &nbsp;•&nbsp; PW: <code style={{ color: "#fff" }}>RiskShield@2026</code></div>
                   </div>
+                  <button type="button" onClick={() => setLoginForm({ user_id: "harshit", password: "RiskShield@2026" })} style={{ background: "rgba(56,189,248,0.2)", border: "1px solid rgba(56,189,248,0.4)", borderRadius: 6, color: "#38bdf8", padding: "4px 10px", fontSize: 11, fontWeight: 700, cursor: "pointer" }}>Pre-fill</button>
                 </div>
               </div>
 
-              {/* Right Column: Biometric Face ID Login Card */}
-              <div
-                style={{
-                  background: "rgba(0, 0, 0, 0.35)",
-                  border: "1px solid rgba(56, 189, 248, 0.3)",
-                  borderRadius: "var(--radius-lg)",
-                  padding: 24,
-                  textAlign: "center",
-                  display: "flex",
-                  flexDirection: "column",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  boxShadow: "0 10px 30px rgba(0, 0, 0, 0.4)"
-                }}
-              >
-                <div
-                  style={{
-                    width: 72,
-                    height: 72,
-                    borderRadius: "50%",
-                    background: "linear-gradient(135deg, rgba(37, 99, 235, 0.6), rgba(225, 29, 72, 0.4))",
-                    border: "2px solid #38bdf8",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 34,
-                    marginBottom: 16,
-                    boxShadow: "0 0 25px rgba(56, 189, 248, 0.4)"
-                  }}
-                >
-                  👤
-                </div>
-
-                <h4 style={{ fontSize: 16, fontWeight: 800, color: "#fff", marginBottom: 6 }}>
-                  Sign in with Face ID
-                </h4>
-                <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 20, lineHeight: 1.5 }}>
-                  Use your enrolled 4-directional biometric profile to sign in instantly with human vision.
-                </p>
-
-                <button
-                  type="button"
-                  onClick={() => setMode("face_login")}
-                  style={{
-                    width: "100%",
-                    padding: "13px",
-                    background: "linear-gradient(135deg, #0284c7, #38bdf8)",
-                    border: 0,
-                    borderRadius: "var(--radius-md)",
-                    color: "#fff",
-                    fontSize: 13,
-                    fontWeight: 800,
-                    cursor: "pointer",
-                    boxShadow: "0 0 20px rgba(56, 189, 248, 0.35)",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8
-                  }}
-                >
-                  <span>📷</span> USE FACE ID SCANNER
-                </button>
-
-                <div style={{ fontSize: 11, color: "var(--text-faint)", marginTop: 12 }}>
-                  Protected by biometric anti-spoofing
-                </div>
+              <div style={{ background: "rgba(0,0,0,0.3)", border: "1px solid rgba(56,189,248,0.25)", borderRadius: 14, padding: 24, textAlign: "center", display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 280, boxShadow: "0 10px 40px rgba(0,0,0,0.4)" }}>
+                <div style={{ width: 70, height: 70, borderRadius: "50%", background: "linear-gradient(135deg, rgba(37,99,235,0.5), rgba(225,29,72,0.4))", border: "2.5px solid #38bdf8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 32, marginBottom: 14, boxShadow: "0 0 28px rgba(56,189,248,0.45)" }}>👤</div>
+                <h4 style={{ fontSize: 15, fontWeight: 800, color: "#fff", marginBottom: 6 }}>Sign in with Face ID</h4>
+                <p style={{ fontSize: 11, color: "rgba(255,255,255,0.45)", marginBottom: 20, lineHeight: 1.6 }}>Use your enrolled 4-directional biometric profile for instant access.</p>
+                <button id="faceid-login-btn" type="button" onClick={() => setMode("face_login")} style={{ ...PB, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}><span>📷</span> USE FACE ID SCANNER</button>
+                <div style={{ fontSize: 10, color: "rgba(255,255,255,0.25)", marginTop: 10 }}>Protected by biometric anti-spoofing</div>
               </div>
             </div>
 
-            {/* Bottom Register Switcher */}
-            <div
-              style={{
-                marginTop: 28,
-                paddingTop: 18,
-                borderTop: "1px solid rgba(255, 255, 255, 0.08)",
-                display: "flex",
-                justifyContent: "space-between",
-                alignItems: "center"
-              }}
-            >
-              <div style={{ fontSize: 13, color: "var(--text-muted)" }}>
-                Don't have an online banking account?
-              </div>
-              <button
-                type="button"
-                onClick={() => setMode("register")}
-                style={{
-                  background: "rgba(255, 255, 255, 0.08)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: 8,
-                  padding: "8px 16px",
-                  color: "#fff",
-                  fontSize: 12,
-                  fontWeight: 700,
-                  cursor: "pointer"
-                }}
-              >
-                Create an Account →
-              </button>
+            <div style={{ marginTop: 26, paddingTop: 18, borderTop: "1px solid rgba(255,255,255,0.06)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+              <span style={{ fontSize: 13, color: "rgba(255,255,255,0.4)" }}>Don't have an online banking account?</span>
+              <button type="button" onClick={startReg} style={{ background: "rgba(255,255,255,0.07)", border: "1px solid rgba(255,255,255,0.12)", borderRadius: 8, padding: "9px 18px", color: "#fff", fontSize: 12, fontWeight: 700, cursor: "pointer" }}>Create an Account →</button>
             </div>
           </div>
         )}
 
-        {/* =========================================================================
-            VIEW 2: CREATE ACCOUNT / REGISTER (Bank of America Style)
-           ========================================================================= */}
+        {/* ===== REGISTER ===== */}
         {mode === "register" && (
-          <div style={{ padding: "30px 28px 36px" }} className="animate-fade-in">
-            <div style={{ marginBottom: 20 }}>
-              <h3 style={{ fontSize: 18, fontWeight: 800, color: "#fff" }}>
-                Create Your Online Banking Account
-              </h3>
-              <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 4 }}>
-                Enter your legal registration details. In the next steps, you will verify via SMS/Email OTP and register Face ID.
-              </p>
-            </div>
-
-            <form onSubmit={handleRegisterSubmit}>
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                    Full Legal Name *
-                  </label>
-                  <input
-                    type="text"
-                    value={regForm.full_name}
-                    onChange={(e) => setRegForm({ ...regForm, full_name: e.target.value })}
-                    placeholder="e.g. Harshit Pentyala"
-                    required
-                    style={{
-                      width: "100%",
-                      padding: "11px 14px",
-                      background: "rgba(0, 0, 0, 0.4)",
-                      border: "1px solid var(--border-glow)",
-                      borderRadius: "var(--radius-md)",
-                      color: "#fff",
-                      fontSize: 14
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                    User ID *
-                  </label>
-                  <input
-                    type="text"
-                    value={regForm.user_id}
-                    onChange={(e) => setRegForm({ ...regForm, user_id: e.target.value })}
-                    placeholder="Choose a unique User ID"
-                    required
-                    style={{
-                      width: "100%",
-                      padding: "11px 14px",
-                      background: "rgba(0, 0, 0, 0.4)",
-                      border: "1px solid var(--border-glow)",
-                      borderRadius: "var(--radius-md)",
-                      color: "#fff",
-                      fontSize: 14
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 16 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                    Password *
-                  </label>
-                  <input
-                    type="password"
-                    value={regForm.password}
-                    onChange={(e) => setRegForm({ ...regForm, password: e.target.value })}
-                    placeholder="Create a strong password"
-                    required
-                    style={{
-                      width: "100%",
-                      padding: "11px 14px",
-                      background: "rgba(0, 0, 0, 0.4)",
-                      border: "1px solid var(--border-glow)",
-                      borderRadius: "var(--radius-md)",
-                      color: "#fff",
-                      fontSize: 14
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                    Confirm Password *
-                  </label>
-                  <input
-                    type="password"
-                    value={regForm.confirm_password}
-                    onChange={(e) => setRegForm({ ...regForm, confirm_password: e.target.value })}
-                    placeholder="Re-enter your password"
-                    required
-                    style={{
-                      width: "100%",
-                      padding: "11px 14px",
-                      background: "rgba(0, 0, 0, 0.4)",
-                      border: "1px solid var(--border-glow)",
-                      borderRadius: "var(--radius-md)",
-                      color: "#fff",
-                      fontSize: 14
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 24 }}>
-                <div>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                    Email Address *
-                  </label>
-                  <input
-                    type="email"
-                    value={regForm.email}
-                    onChange={(e) => setRegForm({ ...regForm, email: e.target.value })}
-                    placeholder="name@example.com"
-                    required
-                    style={{
-                      width: "100%",
-                      padding: "11px 14px",
-                      background: "rgba(0, 0, 0, 0.4)",
-                      border: "1px solid var(--border-glow)",
-                      borderRadius: "var(--radius-md)",
-                      color: "#fff",
-                      fontSize: 14
-                    }}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
-                    Mobile Phone Number *
-                  </label>
-                  <input
-                    type="text"
-                    value={regForm.phone}
-                    onChange={(e) => setRegForm({ ...regForm, phone: e.target.value })}
-                    placeholder="+1 (XXX) XXX-XXXX"
-                    required
-                    style={{
-                      width: "100%",
-                      padding: "11px 14px",
-                      background: "rgba(0, 0, 0, 0.4)",
-                      border: "1px solid var(--border-glow)",
-                      borderRadius: "var(--radius-md)",
-                      color: "#fff",
-                      fontSize: 14
-                    }}
-                  />
-                </div>
-              </div>
-
-              <div style={{ display: "flex", gap: 12 }}>
-                <button
-                  type="button"
-                  onClick={() => setMode("login")}
-                  style={{
-                    padding: "14px 20px",
-                    background: "rgba(255, 255, 255, 0.06)",
-                    border: "1px solid var(--border-subtle)",
-                    borderRadius: "var(--radius-md)",
-                    color: "var(--text-muted)",
-                    fontSize: 14,
-                    fontWeight: 600,
-                    cursor: "pointer"
-                  }}
-                >
-                  ← Back to Sign In
-                </button>
-
-                <button
-                  type="submit"
-                  disabled={busy}
-                  style={{
-                    flex: 1,
-                    padding: "14px",
-                    background: currentTheme.primaryBtn,
-                    border: 0,
-                    borderRadius: "var(--radius-md)",
-                    color: "#fff",
-                    fontSize: 14,
-                    fontWeight: 800,
-                    cursor: busy ? "not-allowed" : "pointer",
-                    boxShadow: currentTheme.primaryBtnGlow,
-                    letterSpacing: "0.5px"
-                  }}
-                >
-                  {busy ? "Registering…" : "CONTINUE TO OTP VERIFICATION →"}
-                </button>
-              </div>
-            </form>
-          </div>
-        )}
-
-        {/* =========================================================================
-            VIEW 3: OTP VERIFICATION SCREEN
-           ========================================================================= */}
-        {mode === "otp" && (
-          <div style={{ padding: "34px 28px 38px", textAlign: "center", maxWidth: 540, margin: "0 auto" }} className="animate-fade-in">
-            <div
-              style={{
-                width: 60,
-                height: 60,
-                borderRadius: "50%",
-                background: "rgba(56, 189, 248, 0.15)",
-                border: "2px solid #38bdf8",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontSize: 28,
-                margin: "0 auto 16px",
-                boxShadow: "0 0 20px rgba(56, 189, 248, 0.3)"
-              }}
-            >
-              ✉️
-            </div>
-
-            <h3 style={{ fontSize: 22, fontWeight: 800, color: "#fff", marginBottom: 6 }}>
-              Verify Your Identity
-            </h3>
-            <p style={{ fontSize: 13, color: "var(--text-muted)", marginBottom: 18 }}>
-              We sent a 6-digit verification code to your registered contacts:
-            </p>
-
-            <div
-              style={{
-                background: "rgba(0, 0, 0, 0.35)",
-                borderRadius: 10,
-                padding: "12px 18px",
-                marginBottom: 24,
-                display: "inline-block",
-                border: "1px solid var(--border-subtle)"
-              }}
-            >
-              <div style={{ fontSize: 12, color: "#fff", marginBottom: 4 }}>
-                📧 Email: <strong>{otpInfo.masked_email}</strong>
-              </div>
-              <div style={{ fontSize: 12, color: "#fff" }}>
-                📱 SMS: <strong>{otpInfo.masked_phone}</strong>
-              </div>
-            </div>
-
-            {/* 6 Digit Input Boxes */}
-            <form onSubmit={handleVerifyOtpSubmit}>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "center",
-                  gap: 10,
-                  marginBottom: 20
-                }}
-                onPaste={handleOtpPaste}
-              >
-                {otpDigits.map((digit, idx) => (
-                  <input
-                    key={idx}
-                    ref={(el) => (otpInputsRef.current[idx] = el)}
-                    type="text"
-                    inputMode="numeric"
-                    maxLength={1}
-                    value={digit}
-                    onChange={(e) => handleOtpChange(idx, e.target.value)}
-                    onKeyDown={(e) => handleOtpKeyDown(idx, e)}
-                    className="otp-digit-input"
-                  />
+          <div>
+            {/* Step progress bar */}
+            <div style={{ padding: "14px 28px 0", background: "rgba(0,0,0,0.2)" }}>
+              <div style={{ display: "flex", borderRadius: 8, overflow: "hidden" }}>
+                {REG_STEPS.map(s => (
+                  <div key={s.id} style={{ flex: 1, textAlign: "center", padding: "7px 2px", background: s.id < regStep ? "rgba(16,185,129,0.15)" : s.id === regStep ? "rgba(56,189,248,0.18)" : "rgba(255,255,255,0.03)", borderBottom: s.id === regStep ? "2px solid #38bdf8" : s.id < regStep ? "2px solid #10b981" : "2px solid transparent", transition: "all 0.3s" }}>
+                    <div style={{ fontSize: 12 }}>{s.id < regStep ? "✓" : s.icon}</div>
+                    <div style={{ fontSize: 8, fontWeight: 700, color: s.id === regStep ? "#38bdf8" : s.id < regStep ? "#10b981" : "rgba(255,255,255,0.25)", marginTop: 2, textTransform: "uppercase" }}>{s.label}</div>
+                  </div>
                 ))}
               </div>
+            </div>
 
-              {/* Convenience Preview Banner for Test Environment */}
-              {otpInfo.preview && (
-                <div
-                  onClick={() => setOtpDigits(otpInfo.preview.split(""))}
-                  style={{
-                    background: "rgba(16, 185, 129, 0.12)",
-                    border: "1px solid rgba(16, 185, 129, 0.35)",
-                    borderRadius: 8,
-                    padding: "8px 14px",
-                    marginBottom: 22,
-                    fontSize: 12,
-                    color: "#34d399",
-                    cursor: "pointer",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    gap: 8
-                  }}
-                >
-                  <span>⚡ Demo Preview:</span>
-                  <strong>Code is {otpInfo.preview}</strong>
-                  <span style={{ fontSize: 10, textDecoration: "underline" }}>(Click to auto-fill)</span>
-                </div>
-              )}
-
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 24 }}>
-                <span style={{ fontSize: 12, color: "var(--text-faint)" }}>
-                  Didn't receive the code?
-                </span>
-                <button
-                  type="button"
-                  onClick={handleResendOtp}
-                  disabled={resendCooldown > 0 || busy}
-                  style={{
-                    background: "transparent",
-                    border: 0,
-                    color: resendCooldown > 0 ? "var(--text-faint)" : "var(--accent-blue)",
-                    fontSize: 12,
-                    fontWeight: 700,
-                    cursor: resendCooldown > 0 ? "default" : "pointer"
-                  }}
-                >
-                  {resendCooldown > 0 ? `Resend Code in ${resendCooldown}s` : "Resend Code"}
-                </button>
+            {/* Step 1: Personal Info */}
+            {regStep === 1 && (
+              <div style={{ padding: "22px 28px 28px" }} className="animate-fade-in">
+                <h3 style={{ fontSize: 17, fontWeight: 800, color: "#fff", marginBottom: 4 }}>Personal Information</h3>
+                <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 18 }}>Enter your legal details as they appear on your government-issued ID.</p>
+                <form onSubmit={step1}>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                    <FG label="Full Legal Name *">
+                      <input id="reg-fullname" type="text" value={regForm.full_name} onChange={e => setRegForm({ ...regForm, full_name: e.target.value })} placeholder="e.g. Harshit Pentyala" required style={IS} />
+                    </FG>
+                    <FG label="Date of Birth *">
+                      <input id="reg-dob" type="date" value={regForm.date_of_birth} onChange={e => setRegForm({ ...regForm, date_of_birth: e.target.value })} required style={{ ...IS, colorScheme: "dark" }} />
+                    </FG>
+                  </div>
+                  <FG label="Street Address">
+                    <input id="reg-address" type="text" value={regForm.address} onChange={e => setRegForm({ ...regForm, address: e.target.value })} placeholder="e.g. 4521 Oak Creek Dr" style={IS} />
+                  </FG>
+                  <div style={{ display: "grid", gridTemplateColumns: "2fr 1fr 1fr", gap: 12 }}>
+                    <FG label="City"><input id="reg-city" type="text" value={regForm.city} onChange={e => setRegForm({ ...regForm, city: e.target.value })} placeholder="Dallas" style={IS} /></FG>
+                    <FG label="State"><input id="reg-state" type="text" value={regForm.state} onChange={e => setRegForm({ ...regForm, state: e.target.value })} placeholder="TX" maxLength={2} style={IS} /></FG>
+                    <FG label="ZIP Code"><input id="reg-zip" type="text" value={regForm.zip} onChange={e => setRegForm({ ...regForm, zip: e.target.value })} placeholder="75201" maxLength={10} style={IS} /></FG>
+                  </div>
+                  <div style={{ display: "flex", gap: 12, marginTop: 10 }}>
+                    <button type="button" onClick={() => { setErr(""); setMode("login"); }} style={GB}>← Back to Sign In</button>
+                    <button id="reg-step1-next" type="submit" disabled={busy} style={{ ...PB, flex: 1 }}>CONTINUE: Login Details →</button>
+                  </div>
+                </form>
               </div>
+            )}
 
-              <button
-                type="submit"
-                disabled={busy || otpDigits.join("").length !== 6}
-                style={{
-                  width: "100%",
-                  padding: "14px",
-                  background: currentTheme.primaryBtn,
-                  border: 0,
-                  borderRadius: "var(--radius-md)",
-                  color: "#fff",
-                  fontSize: 14,
-                  fontWeight: 800,
-                  cursor: busy || otpDigits.join("").length !== 6 ? "not-allowed" : "pointer",
-                  boxShadow: currentTheme.primaryBtnGlow,
-                  letterSpacing: "0.5px"
-                }}
-              >
-                {busy ? "Verifying Code…" : "VERIFY CODE & REGISTER FACE ID →"}
-              </button>
-            </form>
-          </div>
-        )}
-
-        {/* =========================================================================
-            VIEW 4: REGISTER FACE ID (4-Directional Vision Scanner)
-           ========================================================================= */}
-        {mode === "face_enroll" && (
-          <div style={{ padding: "30px 28px 36px" }} className="animate-fade-in">
-            {enrollStep < 4 ? (
-              <div style={{ display: "grid", gridTemplateColumns: "1.1fr 0.9fr", gap: 30, alignItems: "center" }}>
-                {/* Left: Camera / Viewfinder Reticle */}
-                <div style={{ textAlign: "center" }}>
-                  <div
-                    style={{
-                      position: "relative",
-                      width: 320,
-                      height: 320,
-                      margin: "0 auto",
-                      borderRadius: "50%",
-                      overflow: "hidden",
-                      border: "3px solid #38bdf8",
-                      boxShadow: "0 0 35px rgba(56, 189, 248, 0.4), inset 0 0 30px rgba(0, 0, 0, 0.8)",
-                      background: "#020617"
-                    }}
-                  >
-                    {cameraActive ? (
-                      <video
-                        ref={videoRef}
-                        playsInline
-                        muted
-                        autoPlay
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          objectFit: "cover",
-                          transform: "scaleX(-1)" // Mirror view
-                        }}
-                      />
-                    ) : (
-                      /* High-tech vision simulation fallback */
-                      <div
-                        style={{
-                          width: "100%",
-                          height: "100%",
-                          display: "flex",
-                          flexDirection: "column",
-                          alignItems: "center",
-                          justifyContent: "center",
-                          background: "radial-gradient(circle, rgba(30,58,138,0.5) 0%, #030712 85%)",
-                          color: "#38bdf8"
-                        }}
-                      >
-                        <div style={{ fontSize: 72, marginBottom: 8, filter: "drop-shadow(0 0 16px #38bdf8)" }}>
-                          {DIRECTIONS[enrollStep].icon}
-                        </div>
-                        <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 1 }}>HUMAN VISION SENSOR</div>
-                        <div style={{ fontSize: 10, color: "var(--text-muted)", marginTop: 4 }}>
-                          {cameraError ? "Simulated Camera Mode" : "Initializing sensor…"}
-                        </div>
+            {/* Step 2: Login Credentials */}
+            {regStep === 2 && (
+              <div style={{ padding: "22px 28px 28px" }} className="animate-fade-in">
+                <h3 style={{ fontSize: 17, fontWeight: 800, color: "#fff", marginBottom: 4 }}>Create Login Credentials</h3>
+                <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 18 }}>Choose a unique User ID and a strong password.</p>
+                <form onSubmit={step2}>
+                  <FG label="User ID * (min 4 characters, no spaces)">
+                    <input id="reg-userid" type="text" value={regForm.user_id} onChange={e => setRegForm({ ...regForm, user_id: e.target.value.replace(/\s/g, "").toLowerCase() })} placeholder="e.g. harshit92" required minLength={4} style={IS} />
+                  </FG>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14 }}>
+                    <FG label="Password * (min 8 characters)">
+                      <div style={{ position: "relative" }}>
+                        <input id="reg-password" type={showPw ? "text" : "password"} value={regForm.password} onChange={e => setRegForm({ ...regForm, password: e.target.value })} placeholder="Create a strong password" required style={{ ...IS, paddingRight: 55 }} />
+                        <button type="button" onClick={() => setShowPw(!showPw)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: 0, color: "#38bdf8", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>{showPw ? "HIDE" : "SHOW"}</button>
                       </div>
-                    )}
-
-                    {/* Laser Scanline */}
-                    <div className="biometric-scanline" />
-
-                    {/* Directional Overlay Prompt */}
-                    <div
-                      style={{
-                        position: "absolute",
-                        bottom: 20,
-                        left: 20,
-                        right: 20,
-                        background: "rgba(15, 23, 42, 0.85)",
-                        backdropFilter: "blur(8px)",
-                        padding: "6px 12px",
-                        borderRadius: 16,
-                        border: "1px solid rgba(56, 189, 248, 0.4)",
-                        fontSize: 12,
-                        fontWeight: 700,
-                        color: "#fff"
-                      }}
-                    >
-                      {DIRECTIONS[enrollStep].label}
+                    </FG>
+                    <FG label="Confirm Password *">
+                      <div style={{ position: "relative" }}>
+                        <input id="reg-confirm-pw" type={showCPw ? "text" : "password"} value={regForm.confirm_password} onChange={e => setRegForm({ ...regForm, confirm_password: e.target.value })} placeholder="Re-enter password" required style={{ ...IS, paddingRight: 55, border: regForm.confirm_password && regForm.password !== regForm.confirm_password ? "1.5px solid #f43f5e" : IS.border }} />
+                        <button type="button" onClick={() => setShowCPw(!showCPw)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: 0, color: "#38bdf8", fontSize: 10, fontWeight: 700, cursor: "pointer" }}>{showCPw ? "HIDE" : "SHOW"}</button>
+                      </div>
+                    </FG>
+                  </div>
+                  <div style={{ background: "rgba(56,189,248,0.05)", border: "1px solid rgba(56,189,248,0.15)", borderRadius: 8, padding: "9px 12px", marginBottom: 16 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#38bdf8", marginBottom: 5 }}>🔒 PASSWORD STRENGTH</div>
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: "4px 14px" }}>
+                      {[["8+ chars", regForm.password.length >= 8], ["Uppercase", /[A-Z]/.test(regForm.password)], ["Number", /\d/.test(regForm.password)], ["Symbol", /[^A-Za-z0-9]/.test(regForm.password)]].map(([t, ok]) => (
+                        <span key={t} style={{ fontSize: 11, color: ok ? "#10b981" : "rgba(255,255,255,0.3)" }}>{ok ? "✓" : "○"} {t}</span>
+                      ))}
                     </div>
                   </div>
-
-                  <div style={{ marginTop: 12, fontSize: 11, color: "var(--text-muted)" }}>
-                    Frame your face within the oval circle and follow the guidance prompts.
+                  <div style={{ display: "flex", gap: 12 }}>
+                    <button type="button" onClick={() => { setErr(""); setRegStep(1); }} style={GB}>← Back</button>
+                    <button id="reg-step2-next" type="submit" disabled={busy} style={{ ...PB, flex: 1 }}>CONTINUE: Contact Info →</button>
                   </div>
-                </div>
-
-                {/* Right: 4 Directions Checklist & Capture Trigger */}
-                <div>
-                  <h4 style={{ fontSize: 18, fontWeight: 800, color: "#fff", marginBottom: 6 }}>
-                    Calibrate Biometric Angles
-                  </h4>
-                  <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 18 }}>
-                    Bank of America style multi-angle depth capture prevents photo spoofing.
-                  </p>
-
-                  <div style={{ display: "flex", flexDirection: "column", gap: 10, marginBottom: 20 }}>
-                    {DIRECTIONS.map((dir, idx) => {
-                      const isDone = completedDirs.includes(dir.id);
-                      const isCurrent = enrollStep === idx;
-                      return (
-                        <div
-                          key={dir.id}
-                          style={{
-                            padding: "10px 14px",
-                            borderRadius: 10,
-                            background: isCurrent
-                              ? "rgba(56, 189, 248, 0.15)"
-                              : isDone
-                              ? "rgba(16, 185, 129, 0.1)"
-                              : "rgba(0, 0, 0, 0.3)",
-                            border: isCurrent
-                              ? "1.5px solid #38bdf8"
-                              : isDone
-                              ? "1px solid #10b981"
-                              : "1px solid rgba(255, 255, 255, 0.08)",
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            transition: "all 0.2s ease"
-                          }}
-                        >
-                          <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                            <span style={{ fontSize: 18 }}>{dir.icon}</span>
-                            <div>
-                              <div style={{ fontSize: 13, fontWeight: 700, color: isCurrent ? "#fff" : isDone ? "#34d399" : "var(--text-muted)" }}>
-                                {dir.title}
-                              </div>
-                              <div style={{ fontSize: 11, color: "var(--text-faint)" }}>
-                                {dir.instruction}
-                              </div>
-                            </div>
-                          </div>
-
-                          <span style={{ fontSize: 12, fontWeight: 800, color: isDone ? "#34d399" : isCurrent ? "#38bdf8" : "var(--text-faint)" }}>
-                            {isDone ? "✓ Captured" : isCurrent ? "Active" : "Pending"}
-                          </span>
-                        </div>
-                      );
-                    })}
-                  </div>
-
-                  <button
-                    type="button"
-                    onClick={captureDirectionPose}
-                    disabled={busy}
-                    style={{
-                      width: "100%",
-                      padding: "14px",
-                      background: currentTheme.primaryBtn,
-                      border: 0,
-                      borderRadius: "var(--radius-md)",
-                      color: "#fff",
-                      fontSize: 14,
-                      fontWeight: 800,
-                      cursor: busy ? "not-allowed" : "pointer",
-                      boxShadow: currentTheme.primaryBtnGlow,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      gap: 8
-                    }}
-                  >
-                    <span>📷</span>
-                    {enrollStep === 0 && "CONFIRM CENTER POSE (1/4) →"}
-                    {enrollStep === 1 && "CONFIRM LEFT POSE (2/4) →"}
-                    {enrollStep === 2 && "CONFIRM RIGHT POSE (3/4) →"}
-                    {enrollStep === 3 && "COMPLETE BIOMETRIC CAPTURE (4/4) ✓"}
-                  </button>
-                </div>
+                </form>
               </div>
-            ) : (
-              /* Step 4 Completed View */
-              <div style={{ textAlign: "center", padding: "20px 0" }}>
-                <div
-                  style={{
-                    width: 76,
-                    height: 76,
-                    borderRadius: "50%",
-                    background: "rgba(16, 185, 129, 0.2)",
-                    border: "2px solid #10b981",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 36,
-                    margin: "0 auto 16px",
-                    boxShadow: "0 0 30px rgba(16, 185, 129, 0.4)"
-                  }}
-                >
-                  ✓
+            )}
+
+            {/* Step 3: Contact Info */}
+            {regStep === 3 && (
+              <div style={{ padding: "22px 28px 28px" }} className="animate-fade-in">
+                <h3 style={{ fontSize: 17, fontWeight: 800, color: "#fff", marginBottom: 4 }}>Contact Information</h3>
+                <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 18 }}>We'll send verification codes to your email and mobile phone.</p>
+                <form onSubmit={step3}>
+                  <FG label="Email Address *">
+                    <input id="reg-email" type="email" value={regForm.email} onChange={e => setRegForm({ ...regForm, email: e.target.value })} placeholder="name@example.com" required style={IS} />
+                  </FG>
+                  <FG label="Mobile Phone Number *">
+                    <input id="reg-phone" type="tel" value={regForm.phone} onChange={e => setRegForm({ ...regForm, phone: e.target.value })} placeholder="+1 (XXX) XXX-XXXX" required style={IS} />
+                  </FG>
+                  <div style={{ background: "rgba(16,185,129,0.06)", border: "1px solid rgba(16,185,129,0.2)", borderRadius: 8, padding: "9px 12px", marginBottom: 18 }}>
+                    <div style={{ fontSize: 10, fontWeight: 700, color: "#10b981", marginBottom: 3 }}>📋 NEXT STEP</div>
+                    <div style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", lineHeight: 1.5 }}>A 6-digit OTP code will be sent simultaneously to your email and SMS for identity verification.</div>
+                  </div>
+                  <div style={{ display: "flex", gap: 12 }}>
+                    <button type="button" onClick={() => { setErr(""); setRegStep(2); }} style={GB}>← Back</button>
+                    <button id="reg-step3-submit" type="submit" disabled={busy} style={{ ...PB, flex: 1 }}>{busy ? "Sending OTP…" : "SEND VERIFICATION CODE →"}</button>
+                  </div>
+                </form>
+              </div>
+            )}
+
+            {/* Step 4: OTP Verification */}
+            {regStep === 4 && (
+              <div style={{ padding: "30px 28px 34px", textAlign: "center", maxWidth: 500, margin: "0 auto" }} className="animate-fade-in">
+                <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(56,189,248,0.12)", border: "2px solid #38bdf8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 14px", boxShadow: "0 0 24px rgba(56,189,248,0.3)" }}>✉️</div>
+                <h3 style={{ fontSize: 20, fontWeight: 800, color: "#fff", marginBottom: 6 }}>Verify Your Identity</h3>
+                <p style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 14 }}>A 6-digit verification code was sent to:</p>
+                <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 10, padding: "10px 16px", marginBottom: 20, display: "inline-block", border: "1px solid rgba(255,255,255,0.07)" }}>
+                  <div style={{ fontSize: 12, color: "#fff", marginBottom: 3 }}>📧 Email: <strong>{otpInfo.masked_email}</strong></div>
+                  <div style={{ fontSize: 12, color: "#fff" }}>📱 SMS: <strong>{otpInfo.masked_phone}</strong></div>
+                </div>
+                <form onSubmit={verifyOtp}>
+                  <div style={{ display: "flex", justifyContent: "center", gap: 10, marginBottom: 14 }} onPaste={otpPaste}>
+                    {otpDigits.map((d, i) => (
+                      <input key={i} ref={el => (otpRefs.current[i] = el)} type="text" inputMode="numeric" maxLength={1} value={d}
+                        onChange={e => otpChange(i, e.target.value)} onKeyDown={e => otpKey(i, e)}
+                        style={{ width: 48, height: 56, textAlign: "center", fontSize: 22, fontWeight: 800, background: "rgba(0,0,0,0.5)", border: d ? "2px solid #38bdf8" : "2px solid rgba(255,255,255,0.1)", borderRadius: 10, color: "#fff", outline: "none" }} />
+                    ))}
+                  </div>
+                  {otpInfo.preview && (
+                    <div onClick={() => setOtpDigits(otpInfo.preview.split(""))} style={{ background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)", borderRadius: 8, padding: "7px 12px", marginBottom: 16, fontSize: 12, color: "#34d399", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                      ⚡ Demo Code: <strong>{otpInfo.preview}</strong> <span style={{ fontSize: 10, textDecoration: "underline" }}>(Click to auto-fill)</span>
+                    </div>
+                  )}
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 18 }}>
+                    <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Didn't receive the code?</span>
+                    <button type="button" onClick={resend} disabled={resendCD > 0 || busy} style={{ background: "transparent", border: 0, color: resendCD > 0 ? "rgba(255,255,255,0.25)" : "#38bdf8", fontSize: 12, fontWeight: 700, cursor: resendCD > 0 ? "default" : "pointer" }}>{resendCD > 0 ? `Resend in ${resendCD}s` : "Resend Code"}</button>
+                  </div>
+                  <button id="reg-verify-otp" type="submit" disabled={busy || otpDigits.join("").length !== 6} style={{ ...PB, opacity: otpDigits.join("").length !== 6 ? 0.5 : 1 }}>{busy ? "Verifying…" : "VERIFY & CONTINUE TO FACE ID →"}</button>
+                </form>
+              </div>
+            )}
+
+            {/* Step 5: Face ID Enrollment */}
+            {regStep === 5 && (
+              <div style={{ padding: "22px 28px 28px" }} className="animate-fade-in">
+                {enrollStep < 4 ? (
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 26, alignItems: "center" }}>
+                    <div style={{ textAlign: "center" }}>
+                      <HumanVisionDetector activeDirection={DIRECTIONS[enrollStep].id} stepIndex={enrollStep} label={DIRECTIONS[enrollStep].label} size={300} />
+                      <div style={{ marginTop: 10, fontSize: 11, color: "rgba(255,255,255,0.4)" }}>Frame your face within the reticle and follow the guidance.</div>
+                    </div>
+                    <div>
+                      <h4 style={{ fontSize: 16, fontWeight: 800, color: "#fff", marginBottom: 4 }}>Register Biometric Face ID</h4>
+                      <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 14 }}>Complete 4 directional captures to map your 3D face geometry and prevent spoofing.</p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 9, marginBottom: 16 }}>
+                        {DIRECTIONS.map((dir, idx) => {
+                          const isDone = completedDirs.includes(dir.id);
+                          const isCur = enrollStep === idx;
+                          return (
+                            <div key={dir.id} style={{ padding: "9px 12px", borderRadius: 10, background: isCur ? "rgba(56,189,248,0.12)" : isDone ? "rgba(16,185,129,0.09)" : "rgba(0,0,0,0.22)", border: isCur ? "1.5px solid #38bdf8" : isDone ? "1px solid #10b981" : "1px solid rgba(255,255,255,0.06)", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+                              <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
+                                <span style={{ fontSize: 14 }}>{dir.icon}</span>
+                                <div>
+                                  <div style={{ fontSize: 12, fontWeight: 700, color: isCur ? "#fff" : isDone ? "#34d399" : "rgba(255,255,255,0.35)" }}>{dir.title}</div>
+                                  <div style={{ fontSize: 9, color: "rgba(255,255,255,0.22)", lineHeight: 1.4 }}>{dir.instruction}</div>
+                                </div>
+                              </div>
+                              <span style={{ fontSize: 10, fontWeight: 800, color: isDone ? "#34d399" : isCur ? "#38bdf8" : "rgba(255,255,255,0.2)" }}>{isDone ? "✓ Done" : isCur ? "Active" : "Pending"}</span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <button id="reg-capture-pose" type="button" onClick={captureDir} disabled={busy} style={{ ...PB, display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
+                        <span>📷</span>
+                        {enrollStep === 0 && "CONFIRM CENTER POSE (1/4) →"}
+                        {enrollStep === 1 && "CONFIRM LEFT POSE (2/4) →"}
+                        {enrollStep === 2 && "CONFIRM RIGHT POSE (3/4) →"}
+                        {enrollStep === 3 && "COMPLETE BIOMETRIC CAPTURE (4/4) ✓"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <div style={{ textAlign: "center", padding: "20px 0" }}>
+                    <div style={{ width: 70, height: 70, borderRadius: "50%", background: "rgba(16,185,129,0.2)", border: "2px solid #10b981", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 34, margin: "0 auto 12px", boxShadow: "0 0 30px rgba(16,185,129,0.4)" }}>✓</div>
+                    <h3 style={{ fontSize: 20, fontWeight: 800, color: "#34d399" }}>Face ID Enrolled Successfully!</h3>
+                    <p style={{ fontSize: 13, color: "rgba(255,255,255,0.4)", marginTop: 8 }}>Generating your banking profile…</p>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {/* Step 6: Banking Profile Summary */}
+            {regStep === 6 && (
+              <div style={{ padding: "22px 28px 32px" }} className="animate-fade-in">
+                <div style={{ textAlign: "center", marginBottom: 20 }}>
+                  <div style={{ width: 70, height: 70, borderRadius: "50%", background: "linear-gradient(135deg, rgba(16,185,129,0.25), rgba(56,189,248,0.2))", border: "2px solid #10b981", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 34, margin: "0 auto 12px", boxShadow: "0 0 35px rgba(16,185,129,0.4)" }}>🏦</div>
+                  <h3 style={{ fontSize: 21, fontWeight: 800, color: "#34d399", marginBottom: 4 }}>Account Created Successfully!</h3>
+                  <p style={{ fontSize: 13, color: "rgba(255,255,255,0.45)" }}>Welcome to Risk Shield Banking, <strong style={{ color: "#fff" }}>{regForm.full_name}</strong>. Your banking profile is ready.</p>
                 </div>
 
-                <h3 style={{ fontSize: 22, fontWeight: 800, color: "#34d399", marginBottom: 6 }}>
-                  Face Enrollment Completed!
-                </h3>
-                <p style={{ fontSize: 13, color: "var(--text-muted)", maxWidth: 500, margin: "0 auto 24px", lineHeight: 1.6 }}>
-                  {enrollSuccessMsg || "Your biometric profile has been successfully registered across all 4 directional milestones. You can now sign in using Face ID or your password."}
-                </p>
-
-                <div style={{ display: "flex", justifyContent: "center", gap: 12 }}>
-                  <button
-                    type="button"
-                    onClick={handleFinishEnrollment}
-                    disabled={busy}
-                    style={{
-                      padding: "14px 28px",
-                      background: "linear-gradient(135deg, #10b981, #059669)",
-                      border: 0,
-                      borderRadius: "var(--radius-md)",
-                      color: "#fff",
-                      fontSize: 14,
-                      fontWeight: 800,
-                      cursor: busy ? "not-allowed" : "pointer",
-                      boxShadow: "0 0 25px rgba(16, 185, 129, 0.45)"
-                    }}
-                  >
-                    CONTINUE TO BANKING DASHBOARD →
-                  </button>
+                <div style={{ background: "linear-gradient(135deg, rgba(2,132,199,0.15), rgba(16,185,129,0.08))", border: "1px solid rgba(16,185,129,0.3)", borderRadius: 14, padding: "18px 20px", marginBottom: 18, position: "relative", overflow: "hidden" }}>
+                  <div style={{ position: "absolute", top: 0, left: 0, right: 0, height: 3, background: "linear-gradient(90deg, #0284c7, #38bdf8, #10b981)" }} />
+                  <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
+                    <span style={{ fontSize: 18 }}>🛡️</span>
+                    <div>
+                      <div style={{ fontSize: 9, fontWeight: 700, color: "rgba(255,255,255,0.4)", textTransform: "uppercase", letterSpacing: 1 }}>Risk Shield Banking Network</div>
+                      <div style={{ fontSize: 13, fontWeight: 800, color: "#fff" }}>{bankProfile?.account_type || "Advantage Checking"} Account</div>
+                    </div>
+                  </div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 11 }}>
+                    {[
+                      { label: "Customer ID", value: bankProfile?.customer_id || "RS————", icon: "🪪" },
+                      { label: "Account Status", value: "✅ ACTIVE", icon: "📋" },
+                      { label: "Account Number", value: bankProfile?.account_number ? `•••• •••• ${bankProfile.account_number.slice(-4)}` : "••••", icon: "💳" },
+                      { label: "Routing Number", value: bankProfile?.routing_number ? `${bankProfile.routing_number.slice(0,3)} ${bankProfile.routing_number.slice(3,6)} ${bankProfile.routing_number.slice(6)}` : "999 ———", icon: "🏛️" },
+                      { label: "Account Type", value: "Advantage Checking", icon: "🏦" },
+                      { label: "Opening Balance", value: "$0.00", icon: "💰" }
+                    ].map(item => (
+                      <div key={item.label} style={{ background: "rgba(0,0,0,0.3)", borderRadius: 10, padding: "10px 12px" }}>
+                        <div style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5, marginBottom: 3 }}>{item.icon} {item.label}</div>
+                        <div style={{ fontSize: 14, fontWeight: 800, color: "#fff", fontFamily: "monospace" }}>{item.value}</div>
+                      </div>
+                    ))}
+                  </div>
+                  <div style={{ marginTop: 12, background: "rgba(245,158,11,0.08)", border: "1px solid rgba(245,158,11,0.2)", borderRadius: 7, padding: "6px 10px" }}>
+                    <div style={{ fontSize: 9, color: "#fbbf24", fontWeight: 700 }}>⚠️ FICTIONAL BANKING DEMO — Not real banking credentials</div>
+                  </div>
                 </div>
+
+                <div style={{ background: "rgba(0,0,0,0.2)", borderRadius: 10, padding: "11px 14px", marginBottom: 18, border: "1px solid rgba(255,255,255,0.06)" }}>
+                  <div style={{ fontSize: 10, fontWeight: 700, color: "rgba(255,255,255,0.35)", textTransform: "uppercase", marginBottom: 9 }}>📋 Registration Summary</div>
+                  <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "6px 18px" }}>
+                    {[["Full Name", regForm.full_name], ["User ID", regForm.user_id || otpInfo.user_id], ["Email", otpInfo.masked_email], ["Phone", otpInfo.masked_phone], ["Address", regForm.city ? `${regForm.city}, ${regForm.state}` : "On file"], ["Face ID", "✓ 4-direction enrolled"]].map(([k, v]) => (
+                      <div key={k}><span style={{ fontSize: 10, color: "rgba(255,255,255,0.3)", fontWeight: 700 }}>{k}: </span><span style={{ fontSize: 12, color: "#fff", fontWeight: 600 }}>{v}</span></div>
+                    ))}
+                  </div>
+                </div>
+
+                <button id="reg-go-dashboard" type="button" onClick={finishReg} disabled={busy} style={{ ...PB, padding: "15px", fontSize: 15, background: "linear-gradient(135deg, #10b981, #0284c7)", boxShadow: "0 0 30px rgba(16,185,129,0.4)" }}>
+                  {busy ? "Signing In…" : "🚀 GO TO BANKING DASHBOARD →"}
+                </button>
+              </div>
+            )}
+
+            {regStep <= 3 && (
+              <div style={{ textAlign: "center", padding: "0 28px 12px" }}>
+                <button type="button" onClick={() => { setErr(""); setMode("login"); }} style={{ background: "transparent", border: 0, color: "rgba(255,255,255,0.3)", fontSize: 12, cursor: "pointer" }}>Already have an account? Sign In →</button>
               </div>
             )}
           </div>
         )}
 
-        {/* =========================================================================
-            VIEW 5: FACE ID LOGIN SCANNER MODAL / VIEW
-           ========================================================================= */}
+        {/* ===== FACE ID LOGIN ===== */}
         {mode === "face_login" && (
-          <div style={{ padding: "34px 28px 40px", textAlign: "center", maxWidth: 500, margin: "0 auto" }} className="animate-fade-in">
-            <h3 style={{ fontSize: 20, fontWeight: 800, color: "#fff", marginBottom: 6 }}>
-              Face ID Biometric Verification
-            </h3>
-            <p style={{ fontSize: 12, color: "var(--text-muted)", marginBottom: 20 }}>
-              Look at your device camera for instant human vision verification.
-            </p>
-
-            {/* Circular Radar Scanner */}
-            <div
-              style={{
-                position: "relative",
-                width: 260,
-                height: 260,
-                margin: "0 auto 20px",
-                borderRadius: "50%",
-                overflow: "hidden",
-                border: "3px solid #38bdf8",
-                boxShadow: "0 0 35px rgba(56, 189, 248, 0.4)",
-                background: "#020617"
-              }}
-            >
-              {cameraActive ? (
-                <video
-                  ref={videoRef}
-                  playsInline
-                  muted
-                  autoPlay
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    objectFit: "cover",
-                    transform: "scaleX(-1)"
-                  }}
-                />
-              ) : (
-                <div
-                  style={{
-                    width: "100%",
-                    height: "100%",
-                    display: "flex",
-                    flexDirection: "column",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    background: "radial-gradient(circle, rgba(30,58,138,0.6) 0%, #020617 80%)"
-                  }}
-                >
-                  <div style={{ fontSize: 64, filter: "drop-shadow(0 0 16px #38bdf8)" }}>👤</div>
-                  <div style={{ fontSize: 11, color: "#38bdf8", fontWeight: 700, marginTop: 8 }}>
-                    BIOMETRIC SENSOR ACTIVE
-                  </div>
-                </div>
-              )}
-
-              {/* Laser Scanline */}
-              <div className="biometric-scanline" />
-
-              {/* Radar sweep */}
-              <div
-                className="biometric-radar"
-                style={{
-                  position: "absolute",
-                  inset: 0,
-                  borderRadius: "50%",
-                  background: "conic-gradient(from 0deg, transparent 0deg, transparent 270deg, rgba(56, 189, 248, 0.4) 360deg)",
-                  pointerEvents: "none"
-                }}
-              />
+          <div style={{ padding: "30px 28px 36px", textAlign: "center", maxWidth: 500, margin: "0 auto" }} className="animate-fade-in">
+            <h3 style={{ fontSize: 20, fontWeight: 800, color: "#fff", marginBottom: 6 }}>Face ID Biometric Verification</h3>
+            <p style={{ fontSize: 12, color: "rgba(255,255,255,0.4)", marginBottom: 18 }}>Look at your device camera for instant human vision verification.</p>
+            <div style={{ marginBottom: 18 }}>
+              <HumanVisionDetector activeDirection="center" stepIndex={0} label={faceStat || "Authenticating Face..."} size={260} isScanning={true} />
             </div>
-
-            {/* Progress Bar */}
-            <div style={{ width: "100%", height: 6, background: "rgba(255, 255, 255, 0.1)", borderRadius: 3, overflow: "hidden", marginBottom: 12 }}>
-              <div
-                style={{
-                  width: `${faceScanProgress}%`,
-                  height: "100%",
-                  background: "linear-gradient(90deg, #38bdf8, #818cf8, #f43f5e)",
-                  transition: "width 0.4s ease"
-                }}
-              />
+            <div style={{ width: "100%", height: 6, background: "rgba(255,255,255,0.08)", borderRadius: 3, overflow: "hidden", marginBottom: 10 }}>
+              <div style={{ width: `${faceProg}%`, height: "100%", background: "linear-gradient(90deg, #38bdf8, #818cf8, #f43f5e)", transition: "width 0.4s ease" }} />
             </div>
-
-            <div style={{ fontSize: 13, fontWeight: 700, color: "#38bdf8", marginBottom: 20 }}>
-              {faceScanStatus}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => setMode("login")}
-              style={{
-                background: "transparent",
-                border: "1px solid var(--border-subtle)",
-                borderRadius: 8,
-                padding: "8px 16px",
-                color: "var(--text-muted)",
-                fontSize: 12,
-                cursor: "pointer"
-              }}
-            >
-              Cancel / Sign In with Password
-            </button>
+            <div style={{ fontSize: 13, fontWeight: 700, color: "#38bdf8", marginBottom: 18 }}>{faceStat}</div>
+            <button type="button" onClick={() => setMode("login")} style={{ background: "transparent", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 8, padding: "8px 16px", color: "rgba(255,255,255,0.4)", fontSize: 12, cursor: "pointer" }}>Cancel / Sign In with Password</button>
           </div>
         )}
       </div>
