@@ -10,9 +10,32 @@ class Decision(str, Enum):
     BLOCK = "BLOCK"
 
 
+class RecipientProfile(BaseModel):
+    recipient_id: str
+    full_name: str
+    phone: str
+    masked_phone: str
+    email: str
+    masked_email: str
+    location: str
+    account_age_days: int = 365
+    phone_verified: bool = True
+    account_verified: bool = True
+    is_new_recipient: bool = False
+    prior_transfers: int = 0
+    fraud_reports: int = 0
+
+
+class RecipientLookupIn(BaseModel):
+    query: str
+
+
 class TransactionIn(BaseModel):
-    user_id: str
+    user_id: str = "U-8821"
+    customer_name: Optional[str] = "Harshit P."
     recipient_name: str
+    recipient_phone: Optional[str] = None
+    recipient_email: Optional[str] = None
     amount: float = Field(gt=0)
     # Behavioural / account features (normally from the financial service DB or stream)
     avg_amount_90d: float = 100.0
@@ -86,13 +109,29 @@ class RecipientVerification(BaseModel):
     phone_in_user_contacts: Optional[bool] = None
 
 
+class ManagerDecisionIn(BaseModel):
+    action: str  # "APPROVE" | "DENY" | "REQUEST_INFO"
+    manager_name: Optional[str] = "Operations Manager"
+    notes: Optional[str] = None
+
+
 class AssessmentOut(BaseModel):
     transaction_id: str
     stage: int
     risk_score: float
     decision: Decision
+    status: str = "PENDING"
+    transaction_status: str = "PROCESSING"
+    funds_transferred: bool = False
+    reason_code: Optional[str] = None
+    customer_name: Optional[str] = "Harshit P."
+    recipient_name: Optional[str] = None
+    recipient_phone: Optional[str] = None
+    amount: Optional[float] = None
     message: str
     reasons: List[str] = []
     trace: List[Dict[str, Any]] = []
     risk_breakdown: Optional[RiskBreakdown] = None
     communication_evidence: Optional[CommunicationEvidence] = None
+    manager_decision: Optional[Dict[str, Any]] = None
+    created_at: Optional[float] = None

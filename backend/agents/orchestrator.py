@@ -1,5 +1,7 @@
 """ReAct-style orchestrator: Action(tool) -> Observation, with a stored concise trace.
-Only decision evidence is logged (no hidden chain-of-thought)."""
+Only decision evidence is logged (no hidden chain-of-thought).
+Supports human-in-the-loop Bank Operations Queue for high-risk investigations.
+"""
 import os, uuid, time
 from agents.transaction_agent import TransactionAgent
 from agents.fraud_agent import FraudAgent
@@ -33,12 +35,12 @@ class Orchestrator:
         self.rel_agent, self.risk_agent = RelationshipAgent(), RiskAgent()
         self.comm_agent = CommunicationAgent()
         self.rag = PolicyRetriever()
-        self.store = {}   # transaction_id -> state (use PostgreSQL in production)
+        self.store = {}   # transaction_id -> state
         self.audit = []
 
     # ---------- Stage 1 ----------
     def assess(self, t):
-        tid = "TX" + uuid.uuid4().hex[:8].upper()
+        tid = "TX-" + uuid.uuid4().hex[:6].upper()
         t0 = time.perf_counter(); trace = []
         a = self.tx_agent.run(t)
         trace.append({
@@ -61,6 +63,7 @@ class Orchestrator:
 
         decision = self.risk_agent.stage1(obs["fraud_probability"])
         reasons = [FRIENDLY[f["feature"]] for f in obs["top_factors"] if f["feature"] in FRIENDLY]
+
         if decision != "APPROVE":
             q = "new recipient large transfer verification " + " ".join(a["flags"])
             policies = self.rag.search(q, k=2)
@@ -76,15 +79,36 @@ class Orchestrator:
             "step": 4,
             "agent": "Decision Agent",
             "action": "decision_agent",
-            "summary": f"Baseline risk: {p1:.3f} → Decision: {decision}",
+            "summary": f"Baseline risk: {p1:.3f} -> Decision: {decision}",
             "observation": decision
         })
 
-        msgs = {
-            "APPROVE": "Transaction approved.",
-            "REQUIRE_VERIFICATION": "Additional verification required. Click 'I want to pay' to continue.",
-            "HOLD": "Transaction held for review due to critical risk."
-        }
+        # Tiered status and user-facing message
+        if decision == "APPROVE":
+            status = "APPROVED"
+            tx_status = "COMPLETED"
+            funds = True
+            code = "LOW_RISK_APPROVED"
+            msg = "Transaction approved. Your transfer has been processed successfully."
+        elif decision == "REQUIRE_VERIFICATION":
+            status = "AWAITING_VERIFICATION"
+            tx_status = "PENDING_VERIFICATION"
+            funds = False
+            code = "ELEVATED_RISK_VERIFICATION"
+            msg = "Additional recipient verification required before funds can be released."
+        else:  # Critical risk threshold exceeded at stage 1
+            decision = "BLOCK"
+            status = "BLOCKED"
+            tx_status = "STOPPED"
+            funds = False
+            code = "CRITICAL_RISK"
+            msg = (
+                "TRANSFER STOPPED\n\n"
+                "We couldn't complete this transfer because our security system detected critical risk indicators.\n\n"
+                f"Amount: ${t.amount:,.2f}\n"
+                f"Recipient: {t.recipient_name}\n\n"
+                "Your funds were not transferred."
+            )
 
         risk_breakdown = {
             "transaction_risk": p1,
@@ -95,11 +119,27 @@ class Orchestrator:
             "final_risk": p1
         }
 
-        out = dict(transaction_id=tid, stage=1, risk_score=p1,
-                   decision=decision, message=msgs[decision],
-                   reasons=[] if decision == "APPROVE" else reasons, trace=trace,
-                   risk_breakdown=risk_breakdown, communication_evidence=None)
-        self.store[tid] = {"tx": t, "stage1": out}
+        out = dict(
+            transaction_id=tid,
+            stage=1,
+            risk_score=p1,
+            decision=decision,
+            status=status,
+            transaction_status=tx_status,
+            funds_transferred=funds,
+            reason_code=code,
+            customer_name=getattr(t, "customer_name", "Harshit P."),
+            recipient_name=t.recipient_name,
+            recipient_phone=getattr(t, "recipient_phone", None),
+            amount=t.amount,
+            message=msg,
+            reasons=[] if decision == "APPROVE" else reasons,
+            trace=trace,
+            risk_breakdown=risk_breakdown,
+            communication_evidence=None,
+            created_at=time.time()
+        )
+        self.store[tid] = {"tx": t, "stage1": out, "current": out, "history": [out]}
         self._log(tid, 1, decision, p1, time.perf_counter() - t0)
         return out
 
@@ -107,13 +147,11 @@ class Orchestrator:
     def verify(self, tid, v):
         st = self.store.get(tid)
         if not st: raise KeyError(tid)
-        if st["stage1"]["decision"] != "REQUIRE_VERIFICATION":
-            raise ValueError("Transaction does not require verification")
         t, t0, trace = st["tx"], time.perf_counter(), []
 
         # 1. Transaction Agent summary
         tx_eval = self.tx_agent.run(t)
-        tx_summary = "Amount significantly differs from baseline" if tx_eval["flags"] else "Transaction velocity monitored"
+        tx_summary = "Amount significantly differs from baseline" if tx_eval["flags"] else "Transaction velocity within pattern"
         trace.append({
             "step": 1,
             "agent": "Transaction Agent",
@@ -228,7 +266,6 @@ class Orchestrator:
         for e in rel["evidence"]:
             if e not in evidence_items: evidence_items.append(e)
 
-        # Add explicit clean communication bullets
         sig = comm_analysis.get("signals", {})
         if sig.get("urgency", 0) >= 0.4 and "Strong payment urgency" not in evidence_items:
             evidence_items.append("Strong payment urgency")
@@ -244,7 +281,32 @@ class Orchestrator:
         if rel_risk >= 0.40 and "Recipient relationship could not be verified" not in evidence_items:
             evidence_items.append("Recipient relationship could not be verified")
 
-        explanation = self._explain(decision, score, evidence_items, rel["weak_signals"], policies, comm_analysis)
+        # Map decisions to Banking lifecycle
+        if decision == "APPROVE":
+            status = "APPROVED"
+            tx_status = "COMPLETED"
+            funds = True
+            code = "STAGE2_APPROVED"
+            explanation = "Transaction approved after recipient verification. Funds transferred."
+        elif decision == "BLOCK":
+            status = "BLOCKED"
+            tx_status = "STOPPED"
+            funds = False
+            code = "CRITICAL_RISK"
+            explanation = (
+                "TRANSFER STOPPED\n\n"
+                "We couldn't complete this transfer because our security system detected critical risk indicators.\n\n"
+                f"Amount: ${t.amount:,.2f}\n"
+                f"Recipient: {t.recipient_name}\n\n"
+                "Your funds were not transferred."
+            )
+        else:  # HOLD -> Enters Bank Review Queue
+            status = "ON_HOLD"
+            tx_status = "AWAITING_REVIEW"
+            funds = False
+            code = "SECURITY_HOLD"
+            explanation = self._explain_hold(tid, t, score, evidence_items, policies)
+
         if decision != "APPROVE":
             self.rag.add_feedback(f"{tid}: {decision}; reasons={evidence_items}")
 
@@ -270,41 +332,58 @@ class Orchestrator:
             "communication_risk": comm_strength
         } if comm_analysis["has_data"] else None
 
-        out = dict(transaction_id=tid, stage=2, risk_score=score, decision=decision,
-                   message=explanation, reasons=evidence_items if decision != "APPROVE" else [],
-                   trace=trace, risk_breakdown=risk_breakdown, communication_evidence=comm_evidence_out)
+        out = dict(
+            transaction_id=tid,
+            stage=2,
+            risk_score=score,
+            decision=decision,
+            status=status,
+            transaction_status=tx_status,
+            funds_transferred=funds,
+            reason_code=code,
+            customer_name=getattr(t, "customer_name", "Harshit P."),
+            recipient_name=t.recipient_name,
+            recipient_phone=getattr(t, "recipient_phone", None),
+            amount=t.amount,
+            message=explanation,
+            reasons=evidence_items if decision != "APPROVE" else [],
+            trace=trace,
+            risk_breakdown=risk_breakdown,
+            communication_evidence=comm_evidence_out,
+            manager_decision=None,
+            created_at=time.time()
+        )
         st["stage2"] = out
+        st["current"] = out
+        st["history"].append(out)
         self._log(tid, 2, decision, score, time.perf_counter() - t0)
         return out
 
-    # ---------- XAI explanation (Research-Defensible Grounded Format) ----------
-    def _explain(self, decision, score, evidence_items, weak, policies, comm=None):
-        if decision == "APPROVE":
-            return "Transaction approved after verification."
-
-        risk_level = "CRITICAL RISK" if decision == "BLOCK" else "HIGH RISK"
-        action_status = "Transaction blocked." if decision == "BLOCK" else "Transaction held for review."
-
+    # ---------- Explain Hold for Customer ----------
+    def _explain_hold(self, tid, t, score, evidence_items, policies):
         lines = [
-            risk_level,
-            action_status,
+            "HIGH RISK",
+            "Transaction held for review.",
+            "",
+            f"Amount: ${t.amount:,.2f}",
+            f"Recipient: {t.recipient_name}",
+            f"Risk: {score:.0%}",
+            f"Reference: {tid}",
+            "Status: Awaiting bank review",
             "",
             "Evidence:"
         ]
-        for e in evidence_items[:6]:
+        for e in evidence_items[:5]:
             lines.append(f"• {e}")
 
         lines.extend([
             "",
             "Action:",
-            "Verify the recipient through a trusted channel."
+            "Verify the recipient through a trusted channel. A bank manager is investigating this transaction."
         ])
 
         if policies:
-            lines.extend([
-                "",
-                "Policies applied:"
-            ])
+            lines.extend(["", "Policies applied:"])
             for p in policies[:3]:
                 lines.append(f"• {p['id']} {p['title']}")
 
@@ -312,24 +391,70 @@ class Orchestrator:
             "",
             "This is a risk assessment, not a finding that the recipient is a scammer."
         ])
+        return "\n".join(lines)
 
-        txt = "\n".join(lines)
+    # ---------- Bank Manager Review Queue & Decision ----------
+    def get_manager_queue(self):
+        """Returns transactions on HOLD awaiting bank manager investigation."""
+        queue = []
+        for tid, data in self.store.items():
+            curr = data.get("current", {})
+            if curr.get("status") == "ON_HOLD" or curr.get("transaction_status") == "AWAITING_REVIEW":
+                queue.append(curr)
+        queue.sort(key=lambda x: -x.get("created_at", 0))
+        return queue
 
-        key = os.getenv("ANTHROPIC_API_KEY")
-        if key:
-            try:
-                import anthropic
-                c = anthropic.Anthropic(api_key=key)
-                r = c.messages.create(
-                    model=os.getenv("LLM_MODEL", "claude-sonnet-4-5"),
-                    max_tokens=500,
-                    messages=[{"role": "user", "content":
-                        "Format this fraud review notice cleanly without altering facts, accusations, or policy references:\n\n" + txt}]
-                )
-                return r.content[0].text
-            except Exception:
-                pass
-        return txt
+    def get_transaction(self, tid: str):
+        st = self.store.get(tid)
+        if not st: return None
+        return st.get("current")
+
+    def process_manager_decision(self, tid: str, action: str, manager_name: str = "Operations Manager", notes: str = None):
+        st = self.store.get(tid)
+        if not st:
+            raise KeyError(tid)
+
+        curr = st["current"]
+        ts = time.time()
+        mgr_record = {
+            "action": action,
+            "manager_name": manager_name,
+            "notes": notes or f"Investigation concluded by {manager_name}",
+            "decided_at": ts
+        }
+
+        if action == "APPROVE":
+            curr["status"] = "APPROVED_BY_MANAGER"
+            curr["transaction_status"] = "APPROVED_BY_MANAGER"
+            curr["funds_transferred"] = True
+            curr["message"] = (
+                f"TRANSFER APPROVED BY BANK MANAGER\n\n"
+                f"Investigation complete. Transfer of ${curr['amount']:,.2f} to {curr['recipient_name']} has been approved and processed.\n\n"
+                f"Manager Notes: {mgr_record['notes']}"
+            )
+        elif action == "DENY":
+            curr["status"] = "DENIED_BY_MANAGER"
+            curr["transaction_status"] = "STOPPED"
+            curr["funds_transferred"] = False
+            curr["reason_code"] = "MANAGER_DENIED"
+            curr["message"] = (
+                f"TRANSFER STOPPED BY BANK INVESTIGATION\n\n"
+                f"Following security investigation, this transfer was stopped to prevent unauthorized fund loss.\n\n"
+                f"Your funds were not transferred.\n"
+                f"Manager Notes: {mgr_record['notes']}"
+            )
+        else:  # REQUEST_INFO
+            curr["status"] = "INFO_REQUESTED"
+            curr["transaction_status"] = "AWAITING_CUSTOMER_INFO"
+            curr["message"] = (
+                f"ADDITIONAL INFORMATION REQUESTED\n\n"
+                f"The bank fraud team has requested phone confirmation before proceeding.\n\n"
+                f"Notes: {mgr_record['notes']}"
+            )
+
+        curr["manager_decision"] = mgr_record
+        st["history"].append(dict(curr))
+        return curr
 
     def _log(self, tid, stage, decision, score, secs):
         self.audit.append({"tx": tid, "stage": stage, "decision": decision,

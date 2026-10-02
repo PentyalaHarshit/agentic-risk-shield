@@ -1,20 +1,25 @@
 :root {
-  --bg-primary: #0a0f1d;
-  --bg-card: rgba(18, 25, 44, 0.75);
-  --bg-card-hover: rgba(24, 34, 58, 0.85);
+  --bg-primary: #080c16;
+  --bg-card: rgba(15, 23, 42, 0.78);
+  --bg-card-hover: rgba(23, 34, 59, 0.88);
   --border-subtle: rgba(255, 255, 255, 0.08);
-  --border-glow: rgba(99, 102, 241, 0.3);
-  --text-main: #f1f5f9;
+  --border-glow: rgba(99, 102, 241, 0.35);
+  --text-main: #f8fafc;
   --text-muted: #94a3b8;
   --text-faint: #64748b;
   --primary: #6366f1;
   --primary-hover: #4f46e5;
+  --bofa-blue: #0056b3;
+  --bofa-red: #d4001a;
+  --wells-red: #d11928;
+  --wells-gold: #ffbe00;
   --accent-blue: #38bdf8;
   --accent-emerald: #10b981;
   --accent-amber: #f59e0b;
   --accent-rose: #f43f5e;
   --accent-purple: #a855f7;
-  --glass-blur: blur(16px);
+  --glass-blur: blur(20px);
+  --radius-xl: 24px;
   --radius-lg: 16px;
   --radius-md: 10px;
   --radius-sm: 6px;
@@ -31,9 +36,9 @@
 body {
   background-color: var(--bg-primary);
   background-image: 
-    radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
-    radial-gradient(at 100% 0%, rgba(56, 189, 248, 0.12) 0px, transparent 50%),
-    radial-gradient(at 50% 100%, rgba(168, 85, 247, 0.1) 0px, transparent 50%);
+    radial-gradient(at 0% 0%, rgba(30, 58, 138, 0.22) 0px, transparent 50%),
+    radial-gradient(at 100% 0%, rgba(56, 189, 248, 0.14) 0px, transparent 50%),
+    radial-gradient(at 50% 100%, rgba(99, 102, 241, 0.12) 0px, transparent 50%);
   background-attachment: fixed;
   color: var(--text-main);
   font-family: var(--font-sans);
@@ -43,6 +48,11 @@ body {
 
 button {
   font-family: inherit;
+  transition: all 0.15s ease;
+}
+
+button:active {
+  transform: scale(0.985);
 }
 
 input, select, textarea {
@@ -60,12 +70,75 @@ input, select, textarea {
   50% { box-shadow: 0 0 30px rgba(245, 158, 11, 0.45); }
 }
 
+@keyframes criticalPulse {
+  0%, 100% { box-shadow: 0 0 20px rgba(239, 68, 68, 0.3); }
+  50% { box-shadow: 0 0 35px rgba(239, 68, 68, 0.6); }
+}
+
 .animate-fade-in {
   animation: fadeIn 0.3s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
 .pulse-warning {
   animation: pulseGlow 2.5s infinite;
+}
+
+.pulse-critical {
+  animation: criticalPulse 2s infinite;
+}
+
+/* Android Simulator Frame */
+.android-frame {
+  width: 100%;
+  max-width: 440px;
+  min-height: 820px;
+  margin: 0 auto;
+  background: #0f172a;
+  border: 12px solid #1e293b;
+  border-radius: 46px;
+  position: relative;
+  overflow: hidden;
+  box-shadow: 
+    0 0 0 2px rgba(255, 255, 255, 0.08),
+    0 25px 50px -12px rgba(0, 0, 0, 0.8),
+    0 0 80px rgba(99, 102, 241, 0.15);
+}
+
+.android-speaker {
+  width: 80px;
+  height: 4px;
+  background: #334155;
+  border-radius: 4px;
+  margin: 10px auto 4px;
+}
+
+.android-camera {
+  width: 10px;
+  height: 10px;
+  background: #020617;
+  border: 2px solid #1e293b;
+  border-radius: 50%;
+  margin: 4px auto 8px;
+}
+
+.android-status-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 6px 20px 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #94a3b8;
+  letter-spacing: 0.3px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+}
+
+.android-nav-pill {
+  width: 130px;
+  height: 4px;
+  background: rgba(255, 255, 255, 0.3);
+  border-radius: 4px;
+  margin: 16px auto 10px;
 }
 
 /* Custom Scrollbars */

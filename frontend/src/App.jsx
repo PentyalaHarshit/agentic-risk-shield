@@ -45,14 +45,41 @@ const PRESETS = [
   }
 ];
 
-export default function App() {
-  const [screen, setScreen] = useState(1);
-  const [apiOnline, setApiOnline] = useState(null);
+const formatUSD = (val) => {
+  const num = Number(val || 0);
+  return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+};
 
-  // Transaction Inputs
+export default function App() {
+  // Navigation: "customer" (mobile banking view) vs "manager" (bank operations console)
+  const [activePortal, setActivePortal] = useState("customer");
+  const [useAndroidFrame, setUseAndroidFrame] = useState(true);
+
+  // Customer app step:
+  // 1: Search Recipient by Phone/Email
+  // 2: Recipient Found Verification Card
+  // 3: Enter Amount & Purpose
+  // 4: Risk Alert (Needs Review / I WANT TO PAY)
+  // 5: Recipient & Social Verification Form (Stage 2)
+  // 6: Final Customer Outcome (Approved / Stopped / On Hold)
+  const [custStep, setCustStep] = useState(1);
+
+  // System & API state
+  const [apiOnline, setApiOnline] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [err, setErr] = useState("");
+
+  // Recipient Directory search
+  const [searchQuery, setSearchQuery] = useState("+1 (214) 555-0192");
+  const [searchMode, setSearchMode] = useState("phone"); // "phone" | "email"
+  const [foundRecipient, setFoundRecipient] = useState(null);
+  const [searching, setSearching] = useState(false);
+
+  // Transfer Transaction Details
   const [tx, setTx] = useState({
-    recipient_name: "John Smith",
+    customer_name: "Harshit P.",
     amount: 8500,
+    memo: "Urgent family assistance",
     avg_amount_90d: 120,
     recipient_age_days: 20,
     prior_tx_with_recipient: 0,
@@ -61,44 +88,87 @@ export default function App() {
     new_device: false
   });
 
-  // Verification Form Inputs
-  const [f, setF] = useState({
-    name: "John Smith",
+  // Stage 1 & Stage 2 API result
+  const [res, setRes] = useState(null);
+
+  // Stage 2 Verification Form Inputs
+  const [vf, setVf] = useState({
+    name: "John Michael Smith",
     age: "28",
-    location: "Chicago, IL",
-    phone: "+1 312 555 0192",
+    location: "Dallas, Texas",
+    phone: "+1 214 555 0192",
     relationship: "friend",
-    how_do_you_know: "Met at college, been friends for years",
-    history: "Known each other for 4 years, split dinner bills occasionally",
-    reason: "Emergency support for car repairs",
+    how_do_you_know: "Met online 3 weeks ago",
+    history: "First time transferring money to this person",
+    reason: "Urgent emergency medical assistance",
     communication_channel: "WhatsApp",
     communication_text: ""
   });
 
-  // State
-  const [res, setRes] = useState(null);
+  // Communication Forensic Analysis Preview
   const [commAnalysis, setCommAnalysis] = useState(null);
   const [analyzingComm, setAnalyzingComm] = useState(false);
-  const [busy, setBusy] = useState(false);
-  const [err, setErr] = useState("");
-  const [showRawTrace, setShowRawTrace] = useState(false);
 
-  // Check backend health
+  // Manager Portal Queue State
+  const [managerQueue, setManagerQueue] = useState([]);
+  const [selectedCase, setSelectedCase] = useState(null);
+  const [managerNotes, setManagerNotes] = useState("");
+  const [actionBusy, setActionBusy] = useState(false);
+
+  // Periodic health & Manager queue check
   useEffect(() => {
-    fetch(`${API}/health`)
-      .then((r) => r.json())
-      .then((d) => setApiOnline(d.status === "ok"))
-      .catch(() => setApiOnline(false));
-  }, []);
+    const check = () => {
+      fetch(`${API}/health`)
+        .then((r) => r.json())
+        .then((d) => setApiOnline(d.status === "ok"))
+        .catch(() => setApiOnline(false));
 
+      fetch(`${API}/api/manager/queue`)
+        .then((r) => r.json())
+        .then((data) => {
+          setManagerQueue(data);
+          if (!selectedCase && data.length > 0) {
+            setSelectedCase(data[0]);
+          } else if (selectedCase) {
+            const updated = data.find((c) => c.transaction_id === selectedCase.transaction_id);
+            if (updated) setSelectedCase(updated);
+          }
+        })
+        .catch(() => {});
+    };
+
+    check();
+    const interval = setInterval(check, 3000);
+    return () => clearInterval(interval);
+  }, [selectedCase]);
+
+  // Live tracker for customer screen when on HOLD
+  useEffect(() => {
+    if (res && res.transaction_id && res.status === "ON_HOLD") {
+      const poll = setInterval(async () => {
+        try {
+          const r = await fetch(`${API}/api/transactions/${res.transaction_id}`);
+          if (r.ok) {
+            const updated = await r.json();
+            if (updated.status !== "ON_HOLD") {
+              setRes(updated);
+            }
+          }
+        } catch {}
+      }, 2000);
+      return () => clearInterval(poll);
+    }
+  }, [res]);
+
+  // HTTP post helper
   const post = async (endpoint, body) => {
-    const res = await fetch(`${API}${endpoint}`, {
+    const r = await fetch(`${API}${endpoint}`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body)
     });
-    if (!res.ok) {
-      const errText = await res.text();
+    if (!r.ok) {
+      const errText = await r.text();
       let msg = errText;
       try {
         const parsed = JSON.parse(errText);
@@ -106,17 +176,48 @@ export default function App() {
       } catch {}
       throw new Error(msg);
     }
-    return res.json();
+    return r.json();
+  };
+
+  // Perform Recipient Directory Lookup
+  const handleLookup = async (queryToSearch = searchQuery) => {
+    setSearching(true);
+    setErr("");
+    try {
+      const q = encodeURIComponent(queryToSearch);
+      const r = await fetch(`${API}/api/recipients/lookup?q=${q}`);
+      if (!r.ok) throw new Error("Directory lookup failed");
+      const data = await r.json();
+      setFoundRecipient(data);
+      setVf((prev) => ({
+        ...prev,
+        name: data.full_name,
+        location: data.location,
+        phone: data.phone
+      }));
+      setTx((prev) => ({
+        ...prev,
+        recipient_age_days: data.account_age_days,
+        prior_tx_with_recipient: data.prior_transfers
+      }));
+      setCustStep(2);
+    } catch (e) {
+      setErr(e.message);
+    } finally {
+      setSearching(false);
+    }
   };
 
   // Stage 1 Send
-  const handleSend = async () => {
+  const handleStage1Assess = async () => {
     setBusy(true);
     setErr("");
     try {
-      const data = await post("/api/transactions/assess", {
+      const body = {
         user_id: "U-8821",
-        recipient_name: tx.recipient_name,
+        customer_name: tx.customer_name,
+        recipient_name: foundRecipient ? foundRecipient.full_name : "John Michael Smith",
+        recipient_phone: foundRecipient ? foundRecipient.phone : "+1 214 555 0192",
         amount: Number(tx.amount),
         avg_amount_90d: Number(tx.avg_amount_90d),
         recipient_age_days: Number(tx.recipient_age_days),
@@ -124,12 +225,16 @@ export default function App() {
         tx_last_24h: Number(tx.tx_last_24h),
         hour: Number(tx.hour),
         new_device: Boolean(tx.new_device)
-      });
-      setRes(data);
-      if (data.decision === "REQUIRE_VERIFICATION") {
-        setScreen(2);
+      };
+      const result = await post("/api/transactions/assess", body);
+      setRes(result);
+
+      if (result.decision === "APPROVE") {
+        setCustStep(6);
+      } else if (result.decision === "BLOCK" || result.transaction_status === "STOPPED") {
+        setCustStep(6);
       } else {
-        setScreen(4);
+        setCustStep(4);
       }
     } catch (e) {
       setErr(e.message);
@@ -140,7 +245,7 @@ export default function App() {
 
   // Real-time Communication Analysis
   const handleAnalyzeCommunication = async () => {
-    if (!f.communication_text.trim()) {
+    if (!vf.communication_text.trim()) {
       setErr("Please enter message details or an excerpt before analyzing.");
       return;
     }
@@ -148,10 +253,10 @@ export default function App() {
     setErr("");
     try {
       const analysis = await post("/api/communication/analyze", {
-        channel: f.communication_channel,
-        description: f.communication_text,
-        relationship: f.relationship,
-        reason: f.reason
+        channel: vf.communication_channel,
+        description: vf.communication_text,
+        relationship: vf.relationship,
+        reason: vf.reason
       });
       setCommAnalysis(analysis);
     } catch (e) {
@@ -167,20 +272,20 @@ export default function App() {
     setErr("");
     try {
       const data = await post(`/api/transactions/${res.transaction_id}/verify`, {
-        name: f.name,
-        age: Number(f.age),
-        location: f.location,
-        phone: f.phone,
-        relationship: f.relationship,
-        how_do_you_know: f.how_do_you_know,
-        history: f.history,
-        reason: f.reason,
-        communication_channel: f.communication_channel,
-        communication_text: f.communication_text.trim() ? f.communication_text : null,
+        name: vf.name,
+        age: Number(vf.age),
+        location: vf.location,
+        phone: vf.phone,
+        relationship: vf.relationship,
+        how_do_you_know: vf.how_do_you_know,
+        history: vf.history,
+        reason: vf.reason,
+        communication_channel: vf.communication_channel,
+        communication_text: vf.communication_text.trim() ? vf.communication_text : null,
         phone_in_user_contacts: false
       });
       setRes(data);
-      setScreen(4);
+      setCustStep(6);
     } catch (e) {
       setErr(e.message);
     } finally {
@@ -188,9 +293,33 @@ export default function App() {
     }
   };
 
+  // Manager Actions
+  const handleManagerAction = async (action) => {
+    if (!selectedCase) return;
+    setActionBusy(true);
+    try {
+      const updated = await post(`/api/manager/investigate/${selectedCase.transaction_id}`, {
+        action: action,
+        manager_name: "Senior Risk Investigator",
+        notes: managerNotes || `Manager decision executed: ${action}`
+      });
+      setSelectedCase(updated);
+      setManagerNotes("");
+      const q = await (await fetch(`${API}/api/manager/queue`)).json();
+      setManagerQueue(q);
+      if (res && res.transaction_id === updated.transaction_id) {
+        setRes(updated);
+      }
+    } catch (e) {
+      alert("Manager action failed: " + e.message);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
   const applyPreset = (preset) => {
-    setF({
-      ...f,
+    setVf({
+      ...vf,
       communication_channel: preset.channel,
       communication_text: preset.text,
       reason: preset.reason,
@@ -200,22 +329,6 @@ export default function App() {
     setCommAnalysis(null);
   };
 
-  // Color helpers
-  const getDecisionBadge = (decision) => {
-    switch (decision) {
-      case "APPROVE":
-        return { bg: "rgba(16, 185, 129, 0.15)", border: "#10b981", color: "#34d399", label: "APPROVE", icon: "✓" };
-      case "REQUIRE_VERIFICATION":
-        return { bg: "rgba(245, 158, 11, 0.15)", border: "#f59e0b", color: "#fbbf24", label: "REQUIRE VERIFICATION", icon: "⚠️" };
-      case "HOLD":
-        return { bg: "rgba(239, 68, 68, 0.15)", border: "#ef4444", color: "#f87171", label: "HOLD FOR REVIEW", icon: "✋" };
-      case "BLOCK":
-        return { bg: "rgba(225, 29, 72, 0.2)", border: "#e11d48", color: "#fb7185", label: "TRANSACTION BLOCKED", icon: "🛑" };
-      default:
-        return { bg: "rgba(100, 116, 139, 0.2)", border: "#64748b", color: "#94a3b8", label: decision, icon: "ℹ️" };
-    }
-  };
-
   const getScoreColor = (score) => {
     if (score < 0.35) return "#10b981";
     if (score < 0.70) return "#f59e0b";
@@ -223,50 +336,102 @@ export default function App() {
   };
 
   return (
-    <div style={{ maxWidth: 920, margin: "0 auto", padding: "32px 20px 80px" }}>
-      {/* Top Navbar */}
+    <div style={{ maxWidth: 1180, margin: "0 auto", padding: "20px 16px 60px" }}>
+      {/* Top Main Navigation: Customer Mobile App vs Bank Operations Console */}
       <header style={{
         display: "flex",
         alignItems: "center",
         justifyContent: "space-between",
-        paddingBottom: 24,
-        borderBottom: "1px solid var(--border-subtle)",
-        marginBottom: 32
+        padding: "12px 20px",
+        background: "rgba(15, 23, 42, 0.8)",
+        backdropFilter: "blur(12px)",
+        border: "1px solid var(--border-subtle)",
+        borderRadius: "var(--radius-lg)",
+        marginBottom: 28
       }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
           <div style={{
-            width: 44,
-            height: 44,
-            borderRadius: 12,
-            background: "linear-gradient(135deg, #6366f1, #38bdf8)",
+            width: 40,
+            height: 40,
+            borderRadius: 10,
+            background: "linear-gradient(135deg, #0056b3, #38bdf8)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontSize: 22,
-            boxShadow: "0 0 20px rgba(99, 102, 241, 0.4)"
+            fontSize: 20,
+            boxShadow: "0 0 16px rgba(56, 189, 248, 0.35)"
           }}>
-            🛡️
+            🏦
           </div>
           <div>
-            <h1 style={{ fontSize: 20, fontWeight: 700, letterSpacing: "-0.02em" }}>
-              Agentic Risk Shield
+            <h1 style={{ fontSize: 18, fontWeight: 700, letterSpacing: "-0.01em", color: "#fff" }}>
+              Risk Shield Banking Network
             </h1>
-            <p style={{ fontSize: 13, color: "var(--text-muted)" }}>
-              Two-Stage Protection & Social Communication Forensics
+            <p style={{ fontSize: 12, color: "var(--text-muted)" }}>
+              Real-Time Verification, Agentic AI Forensics & Human Operations
             </p>
           </div>
         </div>
 
-        <div style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 8,
-          background: "rgba(255, 255, 255, 0.04)",
-          padding: "6px 14px",
-          borderRadius: 20,
-          border: "1px solid var(--border-subtle)",
-          fontSize: 12
-        }}>
+        {/* Portal Switcher Buttons */}
+        <div style={{ display: "flex", alignItems: "center", gap: 8, background: "rgba(0, 0, 0, 0.3)", padding: 4, borderRadius: 24, border: "1px solid var(--border-subtle)" }}>
+          <button
+            type="button"
+            onClick={() => setActivePortal("customer")}
+            style={{
+              padding: "7px 16px",
+              borderRadius: 20,
+              border: 0,
+              background: activePortal === "customer" ? "linear-gradient(135deg, #6366f1, #4f46e5)" : "transparent",
+              color: activePortal === "customer" ? "#fff" : "var(--text-muted)",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 6
+            }}
+          >
+            <span>📱</span> Customer Banking App
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActivePortal("manager")}
+            style={{
+              padding: "7px 16px",
+              borderRadius: 20,
+              border: 0,
+              background: activePortal === "manager" ? "linear-gradient(135deg, #0284c7, #0369a1)" : "transparent",
+              color: activePortal === "manager" ? "#fff" : "var(--text-muted)",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              position: "relative"
+            }}
+          >
+            <span>👨💼</span> Bank Operations
+            {managerQueue.length > 0 && (
+              <span style={{
+                background: "#f43f5e",
+                color: "#fff",
+                fontSize: 10,
+                fontWeight: 800,
+                padding: "1px 6px",
+                borderRadius: 10,
+                marginLeft: 4
+              }}>
+                {managerQueue.length}
+              </span>
+            )}
+          </button>
+        </div>
+
+        {/* System Status Pill */}
+        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
           <span style={{
             width: 8,
             height: 8,
@@ -274,1168 +439,1125 @@ export default function App() {
             background: apiOnline ? "#10b981" : "#ef4444",
             boxShadow: apiOnline ? "0 0 8px #10b981" : "none"
           }} />
-          <span style={{ color: "var(--text-muted)" }}>
-            Engine: {apiOnline === null ? "Connecting..." : apiOnline ? "Online (Port 8000)" : "Offline"}
-          </span>
+          <span>Engine: {apiOnline ? "Active" : "Offline"}</span>
         </div>
       </header>
 
-      {/* Stepper Progress */}
-      <div style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(4, 1fr)",
-        gap: 8,
-        marginBottom: 32
-      }}>
-        {[
-          { num: 1, label: "Transfer Setup" },
-          { num: 2, label: "Risk Alert" },
-          { num: 3, label: "Social Verification" },
-          { num: 4, label: "Multi-Agent Verdict" }
-        ].map((s) => {
-          const active = screen === s.num;
-          const completed = screen > s.num;
-          return (
-            <div key={s.num} style={{
-              background: active ? "rgba(99, 102, 241, 0.15)" : "rgba(255, 255, 255, 0.02)",
-              border: `1px solid ${active ? "var(--primary)" : completed ? "rgba(16, 185, 129, 0.3)" : "var(--border-subtle)"}`,
-              borderRadius: "var(--radius-md)",
-              padding: "10px 14px",
-              display: "flex",
-              alignItems: "center",
-              gap: 10,
-              transition: "all 0.2s"
-            }}>
-              <span style={{
-                width: 22,
-                height: 22,
-                borderRadius: "50%",
-                background: completed ? "var(--accent-emerald)" : active ? "var(--primary)" : "rgba(255, 255, 255, 0.1)",
-                color: "#fff",
-                fontSize: 11,
-                fontWeight: 700,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center"
-              }}>
-                {completed ? "✓" : s.num}
-              </span>
-              <span style={{
-                fontSize: 12,
-                fontWeight: active ? 600 : 500,
-                color: active ? "#fff" : completed ? "var(--text-muted)" : "var(--text-faint)"
-              }}>
-                {s.label}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Error Alert */}
+      {/* Global Error Banner */}
       {err && (
         <div style={{
-          background: "rgba(239, 68, 68, 0.12)",
+          background: "rgba(239, 68, 68, 0.15)",
           border: "1px solid rgba(239, 68, 68, 0.4)",
           borderRadius: "var(--radius-md)",
           padding: "12px 18px",
           color: "#fca5a5",
-          fontSize: 14,
-          marginBottom: 24,
+          fontSize: 13,
+          marginBottom: 20,
           display: "flex",
           justifyContent: "space-between",
           alignItems: "center"
         }}>
           <span>⚠️ {err}</span>
-          <button
-            onClick={() => setErr("")}
-            style={{ background: "transparent", border: 0, color: "#fca5a5", cursor: "pointer", fontSize: 16 }}
-          >
-            ✕
-          </button>
+          <button onClick={() => setErr("")} style={{ background: "transparent", border: 0, color: "#fca5a5", cursor: "pointer" }}>✕</button>
         </div>
       )}
 
       {/* =========================================================================
-          SCREEN 1: TRANSACTION INITIATION
+          VIEW 1: CUSTOMER BANKING MOBILE APP (Android / Mobile Banking Simulator)
          ========================================================================= */}
-      {screen === 1 && (
-        <div className="animate-fade-in" style={{
-          background: "var(--bg-card)",
-          backdropFilter: "var(--glass-blur)",
-          border: "1px solid var(--border-subtle)",
-          borderRadius: "var(--radius-lg)",
-          padding: 32,
-          boxShadow: "0 20px 40px rgba(0,0,0,0.4)"
-        }}>
-          <div style={{ marginBottom: 24 }}>
-            <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 6 }}>
-              Initiate Bank Transfer
-            </h2>
-            <p style={{ color: "var(--text-muted)", fontSize: 14 }}>
-              Stage 1 ML will perform sub-millisecond behavioral analysis before any user friction is applied.
-            </p>
-          </div>
-
-          {/* Quick Scenario Fillers */}
-          <div style={{ marginBottom: 24 }}>
-            <label style={{ fontSize: 12, fontWeight: 600, color: "var(--text-faint)", textTransform: "uppercase", letterSpacing: 0.5 }}>
-              Quick Scenario Presets:
-            </label>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 8 }}>
-              <button
-                type="button"
-                onClick={() => setTx({ ...tx, recipient_name: "John Smith", amount: 8500, avg_amount_90d: 120, recipient_age_days: 20, prior_tx_with_recipient: 0 })}
-                style={{
-                  background: "rgba(245, 158, 11, 0.1)",
-                  border: "1px solid rgba(245, 158, 11, 0.3)",
-                  color: "#fbbf24",
-                  padding: "6px 14px",
-                  borderRadius: 20,
-                  fontSize: 12,
-                  cursor: "pointer"
-                }}
-              >
-                ⚠️ High Risk / Verification Needed ($8,500)
-              </button>
-              <button
-                type="button"
-                onClick={() => setTx({ ...tx, recipient_name: "Sarah Miller", amount: 75, avg_amount_90d: 90, recipient_age_days: 900, prior_tx_with_recipient: 12 })}
-                style={{
-                  background: "rgba(16, 185, 129, 0.1)",
-                  border: "1px solid rgba(16, 185, 129, 0.3)",
-                  color: "#34d399",
-                  padding: "6px 14px",
-                  borderRadius: 20,
-                  fontSize: 12,
-                  cursor: "pointer"
-                }}
-              >
-                ✓ Low Risk / Auto-Approve ($75)
-              </button>
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20, marginBottom: 20 }}>
-            <div>
-              <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-                Recipient Name
-              </label>
-              <input
-                type="text"
-                value={tx.recipient_name}
-                onChange={(e) => setTx({ ...tx, recipient_name: e.target.value })}
-                style={{
-                  width: "100%",
-                  padding: "12px 14px",
-                  background: "rgba(0, 0, 0, 0.3)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "var(--radius-md)",
-                  color: "#fff",
-                  fontSize: 15
-                }}
-              />
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
-                Transfer Amount ($ USD)
-              </label>
-              <input
-                type="number"
-                value={tx.amount}
-                onChange={(e) => setTx({ ...tx, amount: e.target.value })}
-                style={{
-                  width: "100%",
-                  padding: "12px 14px",
-                  background: "rgba(0, 0, 0, 0.3)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "var(--radius-md)",
-                  color: "#fff",
-                  fontSize: 15
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Context details */}
-          <details style={{
-            background: "rgba(255, 255, 255, 0.02)",
-            border: "1px solid var(--border-subtle)",
-            borderRadius: "var(--radius-md)",
-            padding: "14px 18px",
-            marginBottom: 24
-          }}>
-            <summary style={{ fontSize: 13, fontWeight: 600, color: "var(--text-muted)", cursor: "pointer" }}>
-              ⚙️ Environmental & Velocity Signals (normally from bank stream)
-            </summary>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 14, marginTop: 14 }}>
-              <div>
-                <label style={{ fontSize: 11, color: "var(--text-faint)", display: "block", marginBottom: 4 }}>
-                  90-Day Avg Transfer
-                </label>
-                <input
-                  type="number"
-                  value={tx.avg_amount_90d}
-                  onChange={(e) => setTx({ ...tx, avg_amount_90d: e.target.value })}
-                  style={{
-                    width: "100%",
-                    padding: "8px 10px",
-                    background: "rgba(0,0,0,0.3)",
-                    border: "1px solid var(--border-subtle)",
-                    borderRadius: 6,
-                    color: "#fff",
-                    fontSize: 13
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: 11, color: "var(--text-faint)", display: "block", marginBottom: 4 }}>
-                  Recipient Account Age (Days)
-                </label>
-                <input
-                  type="number"
-                  value={tx.recipient_age_days}
-                  onChange={(e) => setTx({ ...tx, recipient_age_days: e.target.value })}
-                  style={{
-                    width: "100%",
-                    padding: "8px 10px",
-                    background: "rgba(0,0,0,0.3)",
-                    border: "1px solid var(--border-subtle)",
-                    borderRadius: 6,
-                    color: "#fff",
-                    fontSize: 13
-                  }}
-                />
-              </div>
-              <div>
-                <label style={{ fontSize: 11, color: "var(--text-faint)", display: "block", marginBottom: 4 }}>
-                  Prior Transfers to Recipient
-                </label>
-                <input
-                  type="number"
-                  value={tx.prior_tx_with_recipient}
-                  onChange={(e) => setTx({ ...tx, prior_tx_with_recipient: e.target.value })}
-                  style={{
-                    width: "100%",
-                    padding: "8px 10px",
-                    background: "rgba(0,0,0,0.3)",
-                    border: "1px solid var(--border-subtle)",
-                    borderRadius: 6,
-                    color: "#fff",
-                    fontSize: 13
-                  }}
-                />
-              </div>
-            </div>
-          </details>
-
-          <button
-            onClick={handleSend}
-            disabled={busy}
-            style={{
-              width: "100%",
-              padding: "14px 20px",
-              background: "linear-gradient(135deg, #6366f1, #4f46e5)",
-              color: "#fff",
-              border: 0,
-              borderRadius: "var(--radius-md)",
-              fontSize: 15,
-              fontWeight: 600,
-              cursor: busy ? "not-allowed" : "pointer",
-              boxShadow: "0 4px 20px rgba(99, 102, 241, 0.4)",
-              transition: "transform 0.1s ease"
-            }}
-          >
-            {busy ? "Evaluating ML Risk Model…" : "SEND TRANSFER"}
-          </button>
-        </div>
-      )}
-
-      {/* =========================================================================
-          SCREEN 2: INTERVENTION TRIGGER ("I WANT TO PAY")
-         ========================================================================= */}
-      {screen === 2 && res && (
-        <div className="animate-fade-in" style={{
-          background: "var(--bg-card)",
-          backdropFilter: "var(--glass-blur)",
-          border: "1px solid rgba(245, 158, 11, 0.4)",
-          borderRadius: "var(--radius-lg)",
-          padding: 36,
-          boxShadow: "0 20px 40px rgba(0,0,0,0.5)",
-          textAlign: "center"
-        }}>
-          <div className="pulse-warning" style={{
-            width: 68,
-            height: 68,
-            borderRadius: "50%",
-            background: "rgba(245, 158, 11, 0.15)",
-            border: "2px solid #f59e0b",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 32,
-            margin: "0 auto 20px"
-          }}>
-            ⚠️
-          </div>
-
-          <span style={{
-            display: "inline-block",
-            background: "rgba(245, 158, 11, 0.2)",
-            color: "#fbbf24",
-            padding: "4px 12px",
-            borderRadius: 20,
-            fontSize: 12,
-            fontWeight: 700,
-            letterSpacing: 0.5,
-            marginBottom: 12
-          }}>
-            SECURITY INTERVENTION REQUIRED
-          </span>
-
-          <h2 style={{ fontSize: 26, fontWeight: 800, marginBottom: 10 }}>
-            Transaction Needs Verification
-          </h2>
-          <p style={{ color: "var(--text-muted)", fontSize: 15, maxWidth: 540, margin: "0 auto 24px" }}>
-            This transfer was identified as elevated risk (initial score: <strong style={{ color: "#fbbf24" }}>{(res.risk_score * 100).toFixed(1)}%</strong>).
-            To protect your account against impersonation and urgent payment scams, additional verification is required.
-          </p>
-
-          {/* Risk Factors Box */}
-          {res.reasons && res.reasons.length > 0 && (
-            <div style={{
-              background: "rgba(0, 0, 0, 0.35)",
-              border: "1px solid var(--border-subtle)",
-              borderRadius: "var(--radius-md)",
-              padding: "16px 20px",
-              textAlign: "left",
-              maxWidth: 540,
-              margin: "0 auto 28px"
-            }}>
-              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", marginBottom: 8 }}>
-                Detected Anomaly Signals:
-              </div>
-              <ul style={{ paddingLeft: 18, color: "var(--text-muted)", fontSize: 13, lineHeight: 1.6 }}>
-                {res.reasons.map((r, i) => (
-                  <li key={i}>{r}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-
-          {/* Action Buttons */}
-          <div style={{ display: "flex", justifyContent: "center", gap: 14, maxWidth: 540, margin: "0 auto" }}>
+      {activePortal === "customer" && (
+        <div>
+          {/* Toggle for Android Frame */}
+          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
             <button
-              onClick={() => { setScreen(1); setRes(null); }}
+              type="button"
+              onClick={() => setUseAndroidFrame(!useAndroidFrame)}
               style={{
-                flex: 1,
-                padding: "14px 20px",
                 background: "rgba(255, 255, 255, 0.05)",
-                color: "var(--text-muted)",
                 border: "1px solid var(--border-subtle)",
-                borderRadius: "var(--radius-md)",
-                fontSize: 14,
-                fontWeight: 600,
+                borderRadius: 16,
+                padding: "4px 12px",
+                color: "var(--text-muted)",
+                fontSize: 12,
                 cursor: "pointer"
               }}
             >
-              Cancel Transfer
-            </button>
-            <button
-              onClick={() => setScreen(3)}
-              style={{
-                flex: 1.5,
-                padding: "14px 24px",
-                background: "linear-gradient(135deg, #f59e0b, #d97706)",
-                color: "#000",
-                border: 0,
-                borderRadius: "var(--radius-md)",
-                fontSize: 15,
-                fontWeight: 800,
-                letterSpacing: 0.5,
-                cursor: "pointer",
-                boxShadow: "0 0 25px rgba(245, 158, 11, 0.5)"
-              }}
-            >
-              I WANT TO PAY →
+              {useAndroidFrame ? "🖥️ Switch to Expanded View" : "📱 Switch to Android Frame"}
             </button>
           </div>
-        </div>
-      )}
 
-      {/* =========================================================================
-          SCREEN 3: RECIPIENT VERIFICATION & COMMUNICATION EVIDENCE
-         ========================================================================= */}
-      {screen === 3 && (
-        <div className="animate-fade-in" style={{
-          background: "var(--bg-card)",
-          backdropFilter: "var(--glass-blur)",
-          border: "1px solid var(--border-subtle)",
-          borderRadius: "var(--radius-lg)",
-          padding: 32,
-          boxShadow: "0 20px 40px rgba(0,0,0,0.4)"
-        }}>
-          <div style={{ marginBottom: 24, paddingBottom: 16, borderBottom: "1px solid var(--border-subtle)" }}>
-            <h2 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>
-              Recipient Verification Form
-            </h2>
-            <p style={{ color: "var(--text-muted)", fontSize: 13 }}>
-              Please provide recipient details and optional social communication context.
-              Per <strong>POLICY-008</strong>, communication data is only analyzed when you explicitly share it.
-            </p>
-          </div>
+          <div className={useAndroidFrame ? "android-frame" : ""} style={!useAndroidFrame ? {
+            background: "var(--bg-card)",
+            border: "1px solid var(--border-subtle)",
+            borderRadius: "var(--radius-lg)",
+            padding: 32,
+            maxWidth: 680,
+            margin: "0 auto",
+            boxShadow: "0 20px 40px rgba(0,0,0,0.5)"
+          } : {}}>
 
-          {/* Form Fields Grid */}
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 20 }}>
-            <div>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                Recipient Full Name *
-              </label>
-              <input
-                type="text"
-                value={f.name}
-                onChange={(e) => setF({ ...f, name: e.target.value })}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  background: "rgba(0,0,0,0.3)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "var(--radius-md)",
-                  color: "#fff",
-                  fontSize: 14
-                }}
-              />
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                Recipient Age *
-              </label>
-              <input
-                type="number"
-                value={f.age}
-                onChange={(e) => setF({ ...f, age: e.target.value })}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  background: "rgba(0,0,0,0.3)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "var(--radius-md)",
-                  color: "#fff",
-                  fontSize: 14
-                }}
-              />
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                Recipient Location (City, State / Country) *
-              </label>
-              <input
-                type="text"
-                value={f.location}
-                onChange={(e) => setF({ ...f, location: e.target.value })}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  background: "rgba(0,0,0,0.3)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "var(--radius-md)",
-                  color: "#fff",
-                  fontSize: 14
-                }}
-              />
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                Phone Number *
-              </label>
-              <input
-                type="text"
-                value={f.phone}
-                onChange={(e) => setF({ ...f, phone: e.target.value })}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  background: "rgba(0,0,0,0.3)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "var(--radius-md)",
-                  color: "#fff",
-                  fontSize: 14
-                }}
-              />
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                Relationship *
-              </label>
-              <select
-                value={f.relationship}
-                onChange={(e) => setF({ ...f, relationship: e.target.value })}
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  background: "#12192c",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "var(--radius-md)",
-                  color: "#fff",
-                  fontSize: 14
-                }}
-              >
-                <option value="friend">Friend</option>
-                <option value="family">Family Member</option>
-                <option value="business">Business / Contractor</option>
-                <option value="other">Other / New Contact</option>
-              </select>
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                How do you know this person? *
-              </label>
-              <input
-                type="text"
-                value={f.how_do_you_know}
-                onChange={(e) => setF({ ...f, how_do_you_know: e.target.value })}
-                placeholder="e.g. Worked together for 3 years"
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  background: "rgba(0,0,0,0.3)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "var(--radius-md)",
-                  color: "#fff",
-                  fontSize: 14
-                }}
-              />
-            </div>
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginBottom: 28 }}>
-            <div>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                Relationship & Transaction History *
-              </label>
-              <textarea
-                rows={2}
-                value={f.history}
-                onChange={(e) => setF({ ...f, history: e.target.value })}
-                placeholder="Describe your prior interaction history with this person"
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  background: "rgba(0,0,0,0.3)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "var(--radius-md)",
-                  color: "#fff",
-                  fontSize: 14
-                }}
-              />
-            </div>
-            <div>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                Stated Payment Reason *
-              </label>
-              <textarea
-                rows={2}
-                value={f.reason}
-                onChange={(e) => setF({ ...f, reason: e.target.value })}
-                placeholder="What is the purpose of this payment?"
-                style={{
-                  width: "100%",
-                  padding: "10px 12px",
-                  background: "rgba(0,0,0,0.3)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "var(--radius-md)",
-                  color: "#fff",
-                  fontSize: 14
-                }}
-              />
-            </div>
-          </div>
-
-          {/* =========================================================================
-              COMMUNICATION EVIDENCE SECTION
-             ========================================================================= */}
-          <div style={{
-            background: "rgba(99, 102, 241, 0.05)",
-            border: "1px solid rgba(99, 102, 241, 0.3)",
-            borderRadius: "var(--radius-md)",
-            padding: 24,
-            marginBottom: 28
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 14 }}>
+            {/* Android Hardware Header Bar */}
+            {useAndroidFrame && (
               <div>
-                <h3 style={{ fontSize: 16, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
-                  <span>💬</span> Communication Evidence (Social Media & Messaging)
-                </h3>
-                <p style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
-                  Which communication channel did you use, and what did the person tell you?
-                </p>
-              </div>
-              <span style={{
-                background: "rgba(99, 102, 241, 0.2)",
-                color: "#a5b4fc",
-                padding: "3px 10px",
-                borderRadius: 12,
-                fontSize: 11,
-                fontWeight: 600
-              }}>
-                POLICY-008 Compliant
-              </span>
-            </div>
-
-            {/* Channel Selector */}
-            <div style={{ marginBottom: 16 }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 8, color: "var(--text-faint)" }}>
-                SELECT COMMUNICATION CHANNEL:
-              </label>
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                {CHANNELS.map((ch) => {
-                  const selected = f.communication_channel === ch.id;
-                  return (
-                    <button
-                      key={ch.id}
-                      type="button"
-                      onClick={() => {
-                        setF({ ...f, communication_channel: ch.id });
-                        setCommAnalysis(null);
-                      }}
-                      style={{
-                        padding: "8px 16px",
-                        borderRadius: 20,
-                        border: `1px solid ${selected ? ch.color : "var(--border-subtle)"}`,
-                        background: selected ? `rgba(${ch.id === "WhatsApp" ? "37, 211, 102" : "99, 102, 241"}, 0.2)` : "rgba(0,0,0,0.3)",
-                        color: selected ? "#fff" : "var(--text-muted)",
-                        fontSize: 13,
-                        fontWeight: selected ? 700 : 500,
-                        cursor: "pointer",
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 6,
-                        boxShadow: selected ? `0 0 12px ${ch.color}40` : "none",
-                        transition: "all 0.15s"
-                      }}
-                    >
-                      <span>{ch.icon}</span>
-                      <span>{ch.name}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </div>
-
-            {/* Quick Test Presets */}
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ display: "block", fontSize: 11, fontWeight: 600, color: "var(--text-faint)", marginBottom: 6 }}>
-                LOAD RESEARCH TEST CASE EXCERPTS:
-              </label>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {PRESETS.map((p, idx) => (
-                  <button
-                    key={idx}
-                    type="button"
-                    onClick={() => applyPreset(p)}
-                    style={{
-                      background: "rgba(255, 255, 255, 0.05)",
-                      border: "1px solid var(--border-subtle)",
-                      color: "var(--text-muted)",
-                      padding: "5px 12px",
-                      borderRadius: 14,
-                      fontSize: 12,
-                      cursor: "pointer"
-                    }}
-                  >
-                    {p.label}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Message Excerpt Input */}
-            <div style={{ marginBottom: 14 }}>
-              <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 6 }}>
-                Describe what the person told you or paste a conversation excerpt:
-              </label>
-              <textarea
-                rows={3}
-                value={f.communication_text}
-                onChange={(e) => {
-                  setF({ ...f, communication_text: e.target.value });
-                  setCommAnalysis(null);
-                }}
-                placeholder='Example: "They said they urgently need $2,000 because their account is locked, please wire immediately and do not tell anyone..."'
-                style={{
-                  width: "100%",
-                  padding: "12px 14px",
-                  background: "rgba(0,0,0,0.4)",
-                  border: "1px solid var(--border-subtle)",
-                  borderRadius: "var(--radius-md)",
-                  color: "#fff",
-                  fontSize: 14,
-                  lineHeight: 1.5
-                }}
-              />
-            </div>
-
-            {/* Analyze Communication Button */}
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-              <span style={{ fontSize: 12, color: "var(--text-faint)" }}>
-                {f.communication_text.length} characters entered
-              </span>
-              <button
-                type="button"
-                onClick={handleAnalyzeCommunication}
-                disabled={analyzingComm || !f.communication_text.trim()}
-                style={{
-                  padding: "8px 18px",
-                  background: f.communication_text.trim() ? "rgba(99, 102, 241, 0.3)" : "rgba(255,255,255,0.05)",
-                  border: "1px solid var(--border-glow)",
-                  color: f.communication_text.trim() ? "#a5b4fc" : "var(--text-faint)",
-                  borderRadius: "var(--radius-sm)",
-                  fontSize: 13,
-                  fontWeight: 600,
-                  cursor: (analyzingComm || !f.communication_text.trim()) ? "not-allowed" : "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 6
-                }}
-              >
-                <span>⚡</span>
-                <span>{analyzingComm ? "Analyzing Message Forensics…" : "Analyze Communication"}</span>
-              </button>
-            </div>
-
-            {/* Real-time Communication Evidence Preview Card */}
-            {commAnalysis && (
-              <div style={{
-                marginTop: 18,
-                background: "rgba(0, 0, 0, 0.45)",
-                border: `1px solid ${getScoreColor(commAnalysis.evidence_strength || commAnalysis.communication_risk)}60`,
-                borderRadius: "var(--radius-md)",
-                padding: 16
-              }}>
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ fontSize: 14, fontWeight: 700 }}>
-                      Communication Agent Analysis ({commAnalysis.channel}):
-                    </span>
-                    <span style={{
-                      background: `${getScoreColor(commAnalysis.evidence_strength || commAnalysis.communication_risk)}25`,
-                      color: getScoreColor(commAnalysis.evidence_strength || commAnalysis.communication_risk),
-                      padding: "2px 10px",
-                      borderRadius: 12,
-                      fontSize: 12,
-                      fontWeight: 700
-                    }}>
-                      Signal Strength: {((commAnalysis.evidence_strength ?? commAnalysis.communication_risk) * 100).toFixed(0)}%
-                    </span>
-                  </div>
-                  <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                    Urgency: <strong>{((commAnalysis.signals?.urgency ?? commAnalysis.urgency_score ?? 0) * 100).toFixed(0)}%</strong>
-                  </div>
+                <div className="android-speaker" />
+                <div className="android-camera" />
+                <div className="android-status-bar">
+                  <span>9:41</span>
+                  <span>5G 📶 100% 🔋</span>
                 </div>
-
-                {/* Structured Signals Grid */}
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 8, marginBottom: 12 }}>
-                  {[
-                    { label: "Urgency", active: (commAnalysis.signals?.urgency ?? commAnalysis.urgency_score ?? 0) > 0, icon: "🚨" },
-                    { label: "Payment Solicitation", active: commAnalysis.signals?.payment_request ?? commAnalysis.payment_request_detected, icon: "💳" },
-                    { label: "Impersonation", active: commAnalysis.signals?.impersonation ?? commAnalysis.impersonation_indicator, icon: "🎭" },
-                    { label: "Secrecy Instruction", active: commAnalysis.signals?.secrecy ?? commAnalysis.pressure_indicator, icon: "🤫" },
-                    { label: "Call Discouraged", active: commAnalysis.signals?.verification_discouragement, icon: "📵" },
-                    { label: "Suspicious URL", active: commAnalysis.signals?.suspicious_url ?? commAnalysis.suspicious_link_detected, icon: "🔗" }
-                  ].map((sig, i) => (
-                    <div key={i} style={{
-                      background: sig.active ? "rgba(239, 68, 68, 0.15)" : "rgba(255, 255, 255, 0.03)",
-                      border: `1px solid ${sig.active ? "rgba(239, 68, 68, 0.4)" : "var(--border-subtle)"}`,
-                      padding: "6px 8px",
-                      borderRadius: 6,
-                      fontSize: 11,
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 6,
-                      color: sig.active ? "#f87171" : "var(--text-faint)"
-                    }}>
-                      <span>{sig.icon}</span>
-                      <span style={{ fontWeight: sig.active ? 600 : 400 }}>{sig.label}</span>
-                    </div>
-                  ))}
-                </div>
-
-                {/* Evidence items */}
-                {commAnalysis.evidence && commAnalysis.evidence.length > 0 && (
-                  <ul style={{ paddingLeft: 16, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
-                    {commAnalysis.evidence.map((ev, idx) => (
-                      <li key={idx}>{ev}</li>
-                    ))}
-                  </ul>
-                )}
               </div>
             )}
-          </div>
 
-          {/* Verification Navigation */}
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-            <button
-              onClick={() => setScreen(2)}
-              style={{
-                padding: "12px 20px",
-                background: "rgba(255, 255, 255, 0.05)",
-                color: "var(--text-muted)",
+            {/* In-App Customer Navigation Bar */}
+            <div style={{
+              padding: "16px 20px 14px",
+              background: "linear-gradient(180deg, rgba(30, 41, 59, 0.9) 0%, rgba(15, 23, 42, 0.7) 100%)",
+              borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between"
+            }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                {custStep > 1 && custStep !== 6 && (
+                  <button
+                    type="button"
+                    onClick={() => setCustStep(custStep - 1)}
+                    style={{ background: "transparent", border: 0, color: "#fff", fontSize: 18, cursor: "pointer", padding: "0 4px" }}
+                  >
+                    ←
+                  </button>
+                )}
+                <div>
+                  <div style={{ fontSize: 11, color: "var(--accent-blue)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    QuickPay with Zelle® & Risk Shield
+                  </div>
+                  <div style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>
+                    {custStep === 1 && "Send Money"}
+                    {custStep === 2 && "Verify Recipient"}
+                    {custStep === 3 && "Transfer Details"}
+                    {custStep === 4 && "Security Review"}
+                    {custStep === 5 && "Recipient Form"}
+                    {custStep === 6 && "Transfer Status"}
+                  </div>
+                </div>
+              </div>
+              <span style={{ fontSize: 11, color: "var(--text-faint)", background: "rgba(255, 255, 255, 0.05)", padding: "3px 8px", borderRadius: 8 }}>
+                Step {custStep} of 6
+              </span>
+            </div>
+
+            <div style={{ padding: "20px 20px 30px" }}>
+              {/* Account Balance Card */}
+              <div style={{
+                background: "linear-gradient(135deg, #1e293b, #0f172a)",
                 border: "1px solid var(--border-subtle)",
                 borderRadius: "var(--radius-md)",
-                fontSize: 14,
-                cursor: "pointer"
-              }}
-            >
-              ← Back
-            </button>
-            <button
-              onClick={handleVerify}
-              disabled={busy}
-              style={{
-                padding: "14px 28px",
-                background: "linear-gradient(135deg, #6366f1, #38bdf8)",
-                color: "#fff",
-                border: 0,
-                borderRadius: "var(--radius-md)",
-                fontSize: 15,
-                fontWeight: 700,
-                cursor: busy ? "not-allowed" : "pointer",
-                boxShadow: "0 0 20px rgba(99, 102, 241, 0.4)"
-              }}
-            >
-              {busy ? "Running Multi-Agent Audit…" : "SUBMIT VERIFICATION & RUN AUDIT"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {/* =========================================================================
-          SCREEN 4: FINAL MULTI-AGENT VERDICT & RISK DECOMPOSITION
-         ========================================================================= */}
-      {screen === 4 && res && (
-        <div className="animate-fade-in" style={{
-          background: "var(--bg-card)",
-          backdropFilter: "var(--glass-blur)",
-          border: "1px solid var(--border-subtle)",
-          borderRadius: "var(--radius-lg)",
-          padding: 36,
-          boxShadow: "0 20px 40px rgba(0,0,0,0.5)"
-        }}>
-          {/* Decision Banner */}
-          {(() => {
-            const badge = getDecisionBadge(res.decision);
-            return (
-              <div style={{
-                background: badge.bg,
-                border: `1px solid ${badge.border}`,
-                borderRadius: "var(--radius-md)",
-                padding: "20px 24px",
+                padding: "14px 16px",
+                marginBottom: 20,
                 display: "flex",
                 justifyContent: "space-between",
-                alignItems: "center",
-                marginBottom: 24
+                alignItems: "center"
               }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
+                <div>
+                  <div style={{ fontSize: 11, color: "var(--text-faint)", textTransform: "uppercase" }}>FROM ACCOUNT</div>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Advantage Checking (...8492)</div>
+                </div>
+                <div style={{ textAlign: "right" }}>
+                  <div style={{ fontSize: 11, color: "var(--text-faint)" }}>AVAILABLE</div>
+                  <div style={{ fontSize: 15, fontWeight: 800, color: "#10b981", fontFamily: "var(--font-mono)" }}>$14,250.00</div>
+                </div>
+              </div>
+
+              {/* -------------------------------------------------------------
+                  CUSTOMER STEP 1: SEARCH / FIND RECIPIENT
+                 ------------------------------------------------------------- */}
+              {custStep === 1 && (
+                <div className="animate-fade-in">
+                  <div style={{ marginBottom: 16 }}>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 8 }}>
+                      ENTER RECIPIENT PHONE NUMBER OR EMAIL:
+                    </label>
+
+                    {/* Mode Tabs */}
+                    <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
+                      <button
+                        type="button"
+                        onClick={() => { setSearchMode("phone"); setSearchQuery("+1 (214) 555-0192"); }}
+                        style={{
+                          flex: 1,
+                          padding: "6px 10px",
+                          borderRadius: 8,
+                          border: `1px solid ${searchMode === "phone" ? "var(--primary)" : "var(--border-subtle)"}`,
+                          background: searchMode === "phone" ? "rgba(99, 102, 241, 0.2)" : "rgba(0,0,0,0.3)",
+                          color: searchMode === "phone" ? "#fff" : "var(--text-muted)",
+                          fontSize: 12,
+                          cursor: "pointer"
+                        }}
+                      >
+                        📱 Phone Number
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setSearchMode("email"); setSearchQuery("john.smith@gmail.com"); }}
+                        style={{
+                          flex: 1,
+                          padding: "6px 10px",
+                          borderRadius: 8,
+                          border: `1px solid ${searchMode === "email" ? "var(--primary)" : "var(--border-subtle)"}`,
+                          background: searchMode === "email" ? "rgba(99, 102, 241, 0.2)" : "rgba(0,0,0,0.3)",
+                          color: searchMode === "email" ? "#fff" : "var(--text-muted)",
+                          fontSize: 12,
+                          cursor: "pointer"
+                        }}
+                      >
+                        📧 Email Address
+                      </button>
+                    </div>
+
+                    <div style={{ position: "relative" }}>
+                      <input
+                        type="text"
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        placeholder={searchMode === "phone" ? "+1 (XXX) XXX-XXXX" : "name@example.com"}
+                        style={{
+                          width: "100%",
+                          padding: "12px 14px",
+                          background: "rgba(0, 0, 0, 0.4)",
+                          border: "1px solid var(--border-glow)",
+                          borderRadius: "var(--radius-md)",
+                          color: "#fff",
+                          fontSize: 15
+                        }}
+                      />
+                    </div>
+                  </div>
+
+                  {/* Quick Enrolled Contacts Suggestions */}
+                  <div style={{ marginBottom: 20 }}>
+                    <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", marginBottom: 8 }}>
+                      Enrolled Directory Contacts:
+                    </div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {[
+                        { name: "John Michael Smith", phone: "+1 (214) 555-0192", loc: "Dallas, TX", tag: "⚠️ New Recipient" },
+                        { name: "Sarah Elizabeth Miller", phone: "+1 (415) 555-2481", loc: "San Francisco, CA", tag: "✓ Known Contact" },
+                        { name: "David Alexander Vance", phone: "+1 (312) 555-8839", loc: "Chicago, IL", tag: "⚠️ High Velocity" }
+                      ].map((c, i) => (
+                        <div
+                          key={i}
+                          onClick={() => {
+                            setSearchQuery(c.phone);
+                            handleLookup(c.phone);
+                          }}
+                          style={{
+                            background: "rgba(255, 255, 255, 0.03)",
+                            border: "1px solid var(--border-subtle)",
+                            borderRadius: 8,
+                            padding: "10px 12px",
+                            display: "flex",
+                            justifyContent: "space-between",
+                            alignItems: "center",
+                            cursor: "pointer",
+                            transition: "background 0.15s"
+                          }}
+                        >
+                          <div>
+                            <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>{c.name}</div>
+                            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{c.phone} • {c.loc}</div>
+                          </div>
+                          <span style={{ fontSize: 10, background: "rgba(255, 255, 255, 0.08)", padding: "2px 8px", borderRadius: 10, color: "var(--text-muted)" }}>
+                            {c.tag}
+                          </span>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={() => handleLookup()}
+                    disabled={searching || !searchQuery.trim()}
+                    style={{
+                      width: "100%",
+                      padding: "13px",
+                      background: "linear-gradient(135deg, #0056b3, #38bdf8)",
+                      border: 0,
+                      borderRadius: "var(--radius-md)",
+                      color: "#fff",
+                      fontSize: 14,
+                      fontWeight: 700,
+                      cursor: searching ? "not-allowed" : "pointer"
+                    }}
+                  >
+                    {searching ? "Searching Directory…" : "FIND RECIPIENT →"}
+                  </button>
+                </div>
+              )}
+
+              {/* -------------------------------------------------------------
+                  CUSTOMER STEP 2: RECIPIENT FOUND VERIFICATION SCREEN (BofA style)
+                 ------------------------------------------------------------- */}
+              {custStep === 2 && foundRecipient && (
+                <div className="animate-fade-in">
                   <div style={{
-                    width: 48,
-                    height: 48,
+                    background: "rgba(255, 255, 255, 0.02)",
+                    border: "1px solid var(--border-glow)",
+                    borderRadius: "var(--radius-lg)",
+                    padding: 20,
+                    marginBottom: 20
+                  }}>
+                    <div style={{ textAlign: "center", marginBottom: 16 }}>
+                      <div style={{
+                        width: 52,
+                        height: 52,
+                        borderRadius: "50%",
+                        background: "rgba(56, 189, 248, 0.15)",
+                        border: "1px solid var(--accent-blue)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 26,
+                        margin: "0 auto 10px"
+                      }}>
+                        👤
+                      </div>
+                      <h3 style={{ fontSize: 18, fontWeight: 800, color: "#fff" }}>
+                        {foundRecipient.full_name}
+                      </h3>
+                      <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
+                        Registered Network Recipient
+                      </div>
+                    </div>
+
+                    <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 8, padding: "12px 14px", marginBottom: 14 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                        <span style={{ color: "var(--text-faint)" }}>📱 Masked Phone:</span>
+                        <span style={{ color: "#fff", fontWeight: 600 }}>{foundRecipient.masked_phone}</span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
+                        <span style={{ color: "var(--text-faint)" }}>📧 Masked Email:</span>
+                        <span style={{ color: "#fff", fontWeight: 600 }}>{foundRecipient.masked_email}</span>
+                      </div>
+                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0" }}>
+                        <span style={{ color: "var(--text-faint)" }}>📍 Location:</span>
+                        <span style={{ color: "#fff", fontWeight: 600 }}>{foundRecipient.location}</span>
+                      </div>
+                    </div>
+
+                    {/* Verification Status Badges */}
+                    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+                      <div style={{ fontSize: 11, color: "#10b981", display: "flex", alignItems: "center", gap: 6 }}>
+                        <span>✓</span> Phone matches registered network recipient
+                      </div>
+                      <div style={{ fontSize: 11, color: "#10b981", display: "flex", alignItems: "center", gap: 6 }}>
+                        <span>✓</span> Recipient bank account verified
+                      </div>
+                      {foundRecipient.is_new_recipient && (
+                        <div style={{ fontSize: 11, color: "#fbbf24", display: "flex", alignItems: "center", gap: 6 }}>
+                          <span>⚠️</span> New recipient (no prior transfer history with you)
+                        </div>
+                      )}
+                    </div>
+
+                    <button
+                      type="button"
+                      onClick={() => setCustStep(3)}
+                      style={{
+                        width: "100%",
+                        padding: "13px",
+                        background: "linear-gradient(135deg, #10b981, #059669)",
+                        border: 0,
+                        borderRadius: "var(--radius-md)",
+                        color: "#fff",
+                        fontSize: 14,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                        boxShadow: "0 0 15px rgba(16, 185, 129, 0.4)"
+                      }}
+                    >
+                      [✓ THIS IS THE CORRECT PERSON]
+                    </button>
+                  </div>
+                </div>
+              )}
+
+              {/* -------------------------------------------------------------
+                  CUSTOMER STEP 3: AMOUNT & PURPOSE
+                 ------------------------------------------------------------- */}
+              {custStep === 3 && (
+                <div className="animate-fade-in">
+                  <div style={{ marginBottom: 18 }}>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                      Transfer Amount ($ USD):
+                    </label>
+                    <input
+                      type="number"
+                      value={tx.amount}
+                      onChange={(e) => setTx({ ...tx, amount: e.target.value })}
+                      style={{
+                        width: "100%",
+                        padding: "12px 14px",
+                        background: "rgba(0,0,0,0.4)",
+                        border: "1px solid var(--border-glow)",
+                        borderRadius: "var(--radius-md)",
+                        color: "#fff",
+                        fontSize: 22,
+                        fontWeight: 800,
+                        fontFamily: "var(--font-mono)"
+                      }}
+                    />
+                  </div>
+
+                  <div style={{ marginBottom: 18 }}>
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, color: "var(--text-muted)", marginBottom: 6 }}>
+                      What's this for? (Memo):
+                    </label>
+                    <input
+                      type="text"
+                      value={tx.memo}
+                      onChange={(e) => setTx({ ...tx, memo: e.target.value })}
+                      placeholder="e.g. Dinner, rent, emergency assistance"
+                      style={{
+                        width: "100%",
+                        padding: "10px 12px",
+                        background: "rgba(0,0,0,0.3)",
+                        border: "1px solid var(--border-subtle)",
+                        borderRadius: "var(--radius-md)",
+                        color: "#fff",
+                        fontSize: 14
+                      }}
+                    />
+                  </div>
+
+                  {/* Preset Quick Amounts */}
+                  <div style={{ marginBottom: 20 }}>
+                    <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", marginBottom: 6 }}>
+                      Research Scenario Presets:
+                    </label>
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 8 }}>
+                      <button
+                        type="button"
+                        onClick={() => setTx({ ...tx, amount: 8500, avg_amount_90d: 120, prior_tx_with_recipient: 0 })}
+                        style={{ padding: "8px", background: "rgba(245,158,11,0.15)", border: "1px solid rgba(245,158,11,0.4)", borderRadius: 6, color: "#fbbf24", fontSize: 12, cursor: "pointer" }}
+                      >
+                        ⚠️ High Risk ($8,500)
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setTx({ ...tx, amount: 75, avg_amount_90d: 90, prior_tx_with_recipient: 10 })}
+                        style={{ padding: "8px", background: "rgba(16,185,129,0.15)", border: "1px solid rgba(16,185,129,0.4)", borderRadius: 6, color: "#34d399", fontSize: 12, cursor: "pointer" }}
+                      >
+                        ✓ Low Risk ($75)
+                      </button>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleStage1Assess}
+                    disabled={busy || !tx.amount}
+                    style={{
+                      width: "100%",
+                      padding: "13px",
+                      background: "linear-gradient(135deg, #6366f1, #4f46e5)",
+                      border: 0,
+                      borderRadius: "var(--radius-md)",
+                      color: "#fff",
+                      fontSize: 14,
+                      fontWeight: 700,
+                      cursor: busy ? "not-allowed" : "pointer"
+                    }}
+                  >
+                    {busy ? "Evaluating Real-Time Risk Model…" : "CONTINUE TO TRANSFER →"}
+                  </button>
+                </div>
+              )}
+
+              {/* -------------------------------------------------------------
+                  CUSTOMER STEP 4: INTERVENTION WARNING (I WANT TO PAY)
+                 ------------------------------------------------------------- */}
+              {custStep === 4 && res && (
+                <div className="animate-fade-in" style={{ textAlign: "center", padding: "10px 0" }}>
+                  <div className="pulse-warning" style={{
+                    width: 60,
+                    height: 60,
                     borderRadius: "50%",
-                    background: badge.border,
-                    color: "#000",
+                    background: "rgba(245, 158, 11, 0.15)",
+                    border: "2px solid #f59e0b",
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    fontSize: 24,
-                    fontWeight: 900
+                    fontSize: 28,
+                    margin: "0 auto 16px"
                   }}>
-                    {badge.icon}
+                    ⚠️
                   </div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 700, letterSpacing: 0.5, color: badge.color, textTransform: "uppercase" }}>
-                      Stage {res.stage} Orchestrated Verdict
+
+                  <h3 style={{ fontSize: 20, fontWeight: 800, color: "#fbbf24", marginBottom: 6 }}>
+                    Transaction Needs Review
+                  </h3>
+                  <p style={{ color: "var(--text-muted)", fontSize: 13, marginBottom: 16 }}>
+                    Our real-time security model flagged this transfer for additional verification
+                    (Initial risk score: {(res.risk_score * 100).toFixed(0)}%).
+                  </p>
+
+                  {res.reasons && res.reasons.length > 0 && (
+                    <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 8, padding: "12px 14px", textAlign: "left", marginBottom: 20 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", marginBottom: 6 }}>
+                        Risk Flags:
+                      </div>
+                      <ul style={{ paddingLeft: 16, fontSize: 12, color: "var(--text-muted)", lineHeight: 1.5 }}>
+                        {res.reasons.map((r, i) => <li key={i}>{r}</li>)}
+                      </ul>
                     </div>
-                    <h2 style={{ fontSize: 24, fontWeight: 800, color: "#fff", margin: "2px 0 0" }}>
-                      {badge.label}
-                    </h2>
+                  )}
+
+                  <div style={{ display: "flex", gap: 10 }}>
+                    <button
+                      type="button"
+                      onClick={() => setCustStep(1)}
+                      style={{ flex: 1, padding: "12px", background: "rgba(255, 255, 255, 0.05)", border: "1px solid var(--border-subtle)", borderRadius: 8, color: "var(--text-muted)", fontSize: 13 }}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setCustStep(5)}
+                      style={{
+                        flex: 1.6,
+                        padding: "12px",
+                        background: "linear-gradient(135deg, #f59e0b, #d97706)",
+                        border: 0,
+                        borderRadius: 8,
+                        color: "#000",
+                        fontSize: 14,
+                        fontWeight: 800,
+                        cursor: "pointer",
+                        boxShadow: "0 0 16px rgba(245, 158, 11, 0.4)"
+                      }}
+                    >
+                      I WANT TO PAY →
+                    </button>
                   </div>
                 </div>
+              )}
 
-                <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 11, color: "var(--text-faint)", textTransform: "uppercase" }}>
-                    Final Combined Risk
+              {/* -------------------------------------------------------------
+                  CUSTOMER STEP 5: RECIPIENT VERIFICATION & SOCIAL EVIDENCE
+                 ------------------------------------------------------------- */}
+              {custStep === 5 && (
+                <div className="animate-fade-in">
+                  <div style={{ marginBottom: 14 }}>
+                    <label style={{ display: "block", fontSize: 11, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", marginBottom: 4 }}>
+                      Recipient Details
+                    </label>
+                    <div style={{ background: "rgba(0,0,0,0.3)", padding: 10, borderRadius: 8, fontSize: 12, marginBottom: 10 }}>
+                      <div><strong>{vf.name}</strong> • {vf.location}</div>
+                      <div style={{ color: "var(--text-muted)" }}>{vf.phone}</div>
+                    </div>
+
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                      Relationship to Recipient:
+                    </label>
+                    <select
+                      value={vf.relationship}
+                      onChange={(e) => setVf({ ...vf, relationship: e.target.value })}
+                      style={{ width: "100%", padding: "8px 10px", background: "#0f172a", border: "1px solid var(--border-subtle)", borderRadius: 6, color: "#fff", fontSize: 13, marginBottom: 10 }}
+                    >
+                      <option value="friend">Friend</option>
+                      <option value="family">Family Member</option>
+                      <option value="business">Business / Contractor</option>
+                      <option value="other">Other / New Contact</option>
+                    </select>
+
+                    <label style={{ display: "block", fontSize: 12, fontWeight: 600, marginBottom: 4 }}>
+                      Payment Reason:
+                    </label>
+                    <input
+                      type="text"
+                      value={vf.reason}
+                      onChange={(e) => setVf({ ...vf, reason: e.target.value })}
+                      style={{ width: "100%", padding: "8px 10px", background: "rgba(0,0,0,0.3)", border: "1px solid var(--border-subtle)", borderRadius: 6, color: "#fff", fontSize: 13, marginBottom: 14 }}
+                    />
                   </div>
-                  <div style={{ fontSize: 28, fontWeight: 800, color: getScoreColor(res.risk_score), fontFamily: "var(--font-mono)" }}>
-                    {(res.risk_score * 100).toFixed(1)}%
+
+                  {/* Social Communication Forensics */}
+                  <div style={{ background: "rgba(99, 102, 241, 0.05)", border: "1px solid rgba(99, 102, 241, 0.3)", borderRadius: 8, padding: 12, marginBottom: 16 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "#fff", marginBottom: 6 }}>
+                      💬 Communication Evidence (POLICY-008 Opt-In)
+                    </div>
+
+                    {/* Channels */}
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
+                      {CHANNELS.map((ch) => (
+                        <button
+                          key={ch.id}
+                          type="button"
+                          onClick={() => setVf({ ...vf, communication_channel: ch.id })}
+                          style={{
+                            padding: "4px 10px",
+                            borderRadius: 14,
+                            border: `1px solid ${vf.communication_channel === ch.id ? ch.color : "var(--border-subtle)"}`,
+                            background: vf.communication_channel === ch.id ? "rgba(99, 102, 241, 0.25)" : "rgba(0,0,0,0.3)",
+                            color: vf.communication_channel === ch.id ? "#fff" : "var(--text-muted)",
+                            fontSize: 11,
+                            cursor: "pointer"
+                          }}
+                        >
+                          {ch.icon} {ch.name}
+                        </button>
+                      ))}
+                    </div>
+
+                    {/* Presets */}
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 8 }}>
+                      {PRESETS.map((p, i) => (
+                        <button
+                          key={i}
+                          type="button"
+                          onClick={() => applyPreset(p)}
+                          style={{ background: "rgba(255,255,255,0.05)", border: "1px solid var(--border-subtle)", borderRadius: 10, padding: "3px 8px", fontSize: 10, color: "var(--text-muted)", cursor: "pointer" }}
+                        >
+                          {p.label}
+                        </button>
+                      ))}
+                    </div>
+
+                    <textarea
+                      rows={2}
+                      value={vf.communication_text}
+                      onChange={(e) => setVf({ ...vf, communication_text: e.target.value })}
+                      placeholder="Describe what the person told you or paste excerpt..."
+                      style={{ width: "100%", padding: "8px 10px", background: "rgba(0,0,0,0.4)", border: "1px solid var(--border-subtle)", borderRadius: 6, color: "#fff", fontSize: 12, marginBottom: 8 }}
+                    />
+
+                    <div style={{ display: "flex", justifyContent: "flex-end" }}>
+                      <button
+                        type="button"
+                        onClick={handleAnalyzeCommunication}
+                        disabled={analyzingComm || !vf.communication_text.trim()}
+                        style={{ padding: "6px 12px", background: "rgba(99,102,241,0.3)", border: "1px solid var(--border-glow)", borderRadius: 6, color: "#a5b4fc", fontSize: 11, fontWeight: 600, cursor: "pointer" }}
+                      >
+                        {analyzingComm ? "Analyzing…" : "⚡ Analyze Message"}
+                      </button>
+                    </div>
+
+                    {/* Analysis Mini Card */}
+                    {commAnalysis && (
+                      <div style={{ marginTop: 8, background: "rgba(0,0,0,0.4)", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 6, padding: 8, fontSize: 11 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 4 }}>
+                          <span>Signal Strength: <strong>{((commAnalysis.evidence_strength || 0) * 100).toFixed(0)}%</strong></span>
+                          <span>Urgency: <strong>{((commAnalysis.signals?.urgency || 0) * 100).toFixed(0)}%</strong></span>
+                        </div>
+                        <div style={{ color: "var(--text-muted)" }}>
+                          {commAnalysis.evidence && commAnalysis.evidence[0]}
+                        </div>
+                      </div>
+                    )}
                   </div>
+
+                  <button
+                    type="button"
+                    onClick={handleVerify}
+                    disabled={busy}
+                    style={{
+                      width: "100%",
+                      padding: "13px",
+                      background: "linear-gradient(135deg, #6366f1, #38bdf8)",
+                      border: 0,
+                      borderRadius: "var(--radius-md)",
+                      color: "#fff",
+                      fontSize: 14,
+                      fontWeight: 800,
+                      cursor: busy ? "not-allowed" : "pointer"
+                    }}
+                  >
+                    {busy ? "Running Multi-Agent Audit…" : "SUBMIT VERIFICATION"}
+                  </button>
                 </div>
-              </div>
-            );
-          })()}
+              )}
 
-          {/* Research Architecture Flow Visualizer (Directly matching user diagram) */}
-          <div style={{
-            background: "rgba(0, 0, 0, 0.4)",
-            border: "1px solid var(--border-subtle)",
-            borderRadius: "var(--radius-md)",
-            padding: 20,
-            marginBottom: 24
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
-              <div style={{ fontSize: 13, fontWeight: 700, color: "var(--accent-blue)", letterSpacing: 0.5, textTransform: "uppercase" }}>
-                ⚡ STAGE 2 MULTI-AGENT ARCHITECTURE
-              </div>
-              <span style={{ fontSize: 11, color: "var(--text-faint)" }}>
-                Independent Signal Calibration
-              </span>
-            </div>
+              {/* -------------------------------------------------------------
+                  CUSTOMER STEP 6: THREE TIERED OUTCOMES
+                  A: Auto-Approved | B: STOPPED (Critical) | C: ON HOLD (Queue)
+                 ------------------------------------------------------------- */}
+              {custStep === 6 && res && (
+                <div className="animate-fade-in" style={{ textAlign: "center" }}>
+                  {/* OUTCOME A: APPROVED (Very low risk or Manager Approved) */}
+                  {(res.decision === "APPROVE" || res.status === "APPROVED" || res.status === "APPROVED_BY_MANAGER") && (
+                    <div>
+                      <div style={{
+                        width: 64,
+                        height: 64,
+                        borderRadius: "50%",
+                        background: "rgba(16, 185, 129, 0.15)",
+                        border: "2px solid #10b981",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 30,
+                        margin: "0 auto 16px"
+                      }}>
+                        ✓
+                      </div>
+                      <h3 style={{ fontSize: 20, fontWeight: 800, color: "#34d399", marginBottom: 4 }}>
+                        Transfer Completed
+                      </h3>
+                      <p style={{ color: "var(--text-muted)", fontSize: 13, marginBottom: 16 }}>
+                        ${formatUSD(res.amount || tx.amount)} has been successfully transferred to {res.recipient_name}.
+                      </p>
 
-            {/* Stage 2 Parallel Agents */}
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 12, marginBottom: 12 }}>
-              <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--border-subtle)", borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
-                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Transaction Agent</div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: getScoreColor(res.risk_breakdown?.transaction_risk || res.risk_score), fontFamily: "var(--font-mono)", marginTop: 2 }}>
-                  {((res.risk_breakdown?.transaction_risk ?? res.risk_score) * 100).toFixed(1)}%
-                </div>
-              </div>
+                      <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 8, padding: 12, textAlign: "left", fontSize: 12, marginBottom: 20 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                          <span style={{ color: "var(--text-faint)" }}>Status:</span>
+                          <span style={{ color: "#34d399", fontWeight: 700 }}>✓ COMPLETED</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                          <span style={{ color: "var(--text-faint)" }}>Reference:</span>
+                          <span style={{ fontFamily: "var(--font-mono)", color: "#fff" }}>{res.transaction_id}</span>
+                        </div>
+                        {res.manager_decision && (
+                          <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                            <span style={{ color: "var(--text-faint)" }}>Manager Review:</span>
+                            <span style={{ color: "#a5b4fc" }}>Approved by {res.manager_decision.manager_name}</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  )}
 
-              <div style={{ background: "rgba(99, 102, 241, 0.08)", border: "1px solid rgba(99, 102, 241, 0.3)", borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
-                <div style={{ fontSize: 11, color: "#a5b4fc" }}>Communication Agent</div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: getScoreColor(res.risk_breakdown?.communication_signal_strength ?? res.risk_breakdown?.communication_risk ?? 0), fontFamily: "var(--font-mono)", marginTop: 2 }}>
-                  {(((res.risk_breakdown?.communication_signal_strength ?? res.risk_breakdown?.communication_risk) || 0) * 100).toFixed(0)}%
-                </div>
-                <div style={{ fontSize: 9, color: "var(--text-faint)", marginTop: 2 }}>Signal Strength</div>
-              </div>
-
-              <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--border-subtle)", borderRadius: 8, padding: "10px 12px", textAlign: "center" }}>
-                <div style={{ fontSize: 11, color: "var(--text-muted)" }}>Relationship Agent</div>
-                <div style={{ fontSize: 16, fontWeight: 800, color: getScoreColor(res.risk_breakdown?.relationship_risk || 0.2), fontFamily: "var(--font-mono)", marginTop: 2 }}>
-                  {((res.risk_breakdown?.relationship_risk ?? 0.2) * 100).toFixed(0)}%
-                </div>
-              </div>
-            </div>
-
-            {/* History Agent & Orchestrator Flow */}
-            <div style={{ textAlign: "center", margin: "8px 0" }}>
-              <span style={{ color: "var(--text-faint)", fontSize: 12 }}>↓</span>
-            </div>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 12, alignItems: "center" }}>
-              <div style={{ background: "rgba(255,255,255,0.03)", border: "1px solid var(--border-subtle)", borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>History Agent Signal:</span>
-                <span style={{ fontSize: 15, fontWeight: 800, color: getScoreColor(res.risk_breakdown?.history_risk || 0.35), fontFamily: "var(--font-mono)" }}>
-                  {((res.risk_breakdown?.history_risk ?? 0.35) * 100).toFixed(0)}%
-                </span>
-              </div>
-
-              <div style={{ background: "rgba(56, 189, 248, 0.08)", border: "1px solid rgba(56, 189, 248, 0.3)", borderRadius: 8, padding: "10px 14px", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <span style={{ fontSize: 12, color: "#7dd3fc" }}>Agent Orchestrator:</span>
-                <span style={{ fontSize: 11, color: "var(--text-muted)", fontFamily: "var(--font-mono)" }}>
-                  XGBoost + RAG + XAI
-                </span>
-              </div>
-            </div>
-          </div>
-
-          {/* =========================================================================
-              🔍 RESEARCH-QUALITY AGENT AUDIT TRACE
-             ========================================================================= */}
-          <div style={{
-            background: "rgba(0, 0, 0, 0.35)",
-            border: "1px solid var(--border-subtle)",
-            borderRadius: "var(--radius-md)",
-            padding: 24,
-            marginBottom: 24
-          }}>
-            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 18 }}>
-              <h3 style={{ fontSize: 15, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 8 }}>
-                <span>🔍</span> Agent Audit Trace
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowRawTrace(!showRawTrace)}
-                style={{
-                  background: "transparent",
-                  border: "1px solid var(--border-subtle)",
-                  color: "var(--text-muted)",
-                  padding: "4px 10px",
-                  borderRadius: 6,
-                  fontSize: 11,
-                  cursor: "pointer"
-                }}
-              >
-                {showRawTrace ? "Hide Raw JSON" : "View Raw JSON"}
-              </button>
-            </div>
-
-            {/* Structured Trace Cards */}
-            <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {res.trace && res.trace.map((item, idx) => {
-                const agentIcons = {
-                  "Transaction Agent": "💳",
-                  "Communication Agent": "💬",
-                  "Relationship Agent": "👥",
-                  "Risk Agent": "⚡",
-                  "Risk Agent (XGBoost Stage 1)": "⚡",
-                  "Risk Agent (XGBoost Stage 2)": "⚡",
-                  "RAG Policy Agent": "📚",
-                  "Decision Agent": "🎯"
-                };
-                const icon = agentIcons[item.agent] || "🤖";
-                return (
-                  <div key={idx} style={{
-                    background: "rgba(255, 255, 255, 0.02)",
-                    border: "1px solid var(--border-subtle)",
-                    borderRadius: 8,
-                    padding: "10px 14px",
-                    display: "flex",
-                    alignItems: "flex-start",
-                    gap: 12
-                  }}>
-                    <span style={{
-                      width: 24,
-                      height: 24,
-                      borderRadius: 6,
-                      background: "rgba(255, 255, 255, 0.05)",
-                      fontSize: 12,
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      flexShrink: 0
+                  {/* OUTCOME B: CRITICAL RISK / STOPPED */}
+                  {(res.decision === "BLOCK" || res.status === "BLOCKED" || res.transaction_status === "STOPPED" || res.status === "DENIED_BY_MANAGER") && (
+                    <div className="pulse-critical" style={{
+                      background: "rgba(225, 29, 72, 0.1)",
+                      border: "1px solid rgba(225, 29, 72, 0.4)",
+                      borderRadius: "var(--radius-lg)",
+                      padding: 24,
+                      marginBottom: 20
                     }}>
-                      {item.step || idx + 1}
-                    </span>
-                    <div style={{ flex: 1 }}>
-                      <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, color: "#e2e8f0" }}>
-                        <span>{icon}</span>
-                        <span>{item.agent || item.action}</span>
+                      <div style={{
+                        width: 56,
+                        height: 56,
+                        borderRadius: "50%",
+                        background: "rgba(225, 29, 72, 0.2)",
+                        border: "2px solid #e11d48",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 28,
+                        margin: "0 auto 12px"
+                      }}>
+                        🚫
                       </div>
-                      <div style={{ fontSize: 12, color: "var(--accent-blue)", marginTop: 2, fontFamily: "var(--font-mono)" }}>
-                        → {item.summary || JSON.stringify(item.observation)}
+                      <h3 style={{ fontSize: 20, fontWeight: 900, color: "#fb7185", marginBottom: 8 }}>
+                        TRANSFER STOPPED
+                      </h3>
+                      <p style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.5, marginBottom: 16 }}>
+                        We couldn't complete this transfer because our security system detected critical risk indicators.
+                      </p>
+
+                      <div style={{ background: "rgba(0,0,0,0.4)", borderRadius: 8, padding: 12, textAlign: "left", fontSize: 12, marginBottom: 16 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                          <span style={{ color: "var(--text-faint)" }}>Amount:</span>
+                          <span style={{ fontWeight: 700, color: "#fff" }}>${formatUSD(res.amount || tx.amount)}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                          <span style={{ color: "var(--text-faint)" }}>Recipient:</span>
+                          <span style={{ fontWeight: 700, color: "#fff" }}>{res.recipient_name}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                          <span style={{ color: "var(--text-faint)" }}>Funds Status:</span>
+                          <span style={{ color: "#fb7185", fontWeight: 700 }}>Your funds were not transferred.</span>
+                        </div>
                       </div>
                     </div>
-                  </div>
-                );
-              })}
-            </div>
+                  )}
 
-            {showRawTrace && (
-              <div style={{
-                marginTop: 14,
-                background: "#080c14",
-                border: "1px solid var(--border-subtle)",
-                borderRadius: "var(--radius-md)",
-                padding: 14,
-                maxHeight: 220,
-                overflowY: "auto",
-                fontFamily: "var(--font-mono)",
-                fontSize: 11,
-                color: "#93c5fd"
-              }}>
-                <pre>{JSON.stringify(res.trace, null, 2)}</pre>
-              </div>
-            )}
-          </div>
+                  {/* OUTCOME C: HOLD -> AWAITING BANK REVIEW */}
+                  {(res.decision === "HOLD" && res.status === "ON_HOLD") && (
+                    <div className="pulse-warning" style={{
+                      background: "rgba(245, 158, 11, 0.08)",
+                      border: "1px solid rgba(245, 158, 11, 0.4)",
+                      borderRadius: "var(--radius-lg)",
+                      padding: 24,
+                      marginBottom: 20
+                    }}>
+                      <div style={{
+                        width: 56,
+                        height: 56,
+                        borderRadius: "50%",
+                        background: "rgba(245, 158, 11, 0.15)",
+                        border: "2px solid #f59e0b",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontSize: 28,
+                        margin: "0 auto 12px"
+                      }}>
+                        🟡
+                      </div>
+                      <h3 style={{ fontSize: 20, fontWeight: 800, color: "#fbbf24", marginBottom: 6 }}>
+                        TRANSFER ON HOLD
+                      </h3>
+                      <p style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.5, marginBottom: 14 }}>
+                        This transfer requires additional review before it can be completed.
+                      </p>
 
-          {/* Structured Social Communication Evidence Signals */}
-          {res.communication_evidence && (
-            <div style={{
-              background: "rgba(37, 211, 102, 0.05)",
-              border: "1px solid rgba(37, 211, 102, 0.25)",
-              borderRadius: "var(--radius-md)",
-              padding: 20,
-              marginBottom: 24
-            }}>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                <h4 style={{ fontSize: 14, fontWeight: 700, color: "#34d399", display: "flex", alignItems: "center", gap: 6 }}>
-                  <span>💬</span> Social Communication Forensics ({res.communication_evidence.channel})
-                </h4>
-                <span style={{ fontSize: 12, color: "var(--text-muted)" }}>
-                  Signal Strength: {(((res.communication_evidence.evidence_strength ?? res.communication_evidence.communication_risk) || 0) * 100).toFixed(0)}%
-                </span>
-              </div>
+                      <div style={{ background: "rgba(0,0,0,0.35)", borderRadius: 8, padding: 12, textAlign: "left", fontSize: 12, marginBottom: 16 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                          <span style={{ color: "var(--text-faint)" }}>Amount:</span>
+                          <span style={{ color: "#fff", fontWeight: 700 }}>${formatUSD(res.amount || tx.amount)}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                          <span style={{ color: "var(--text-faint)" }}>Recipient:</span>
+                          <span style={{ color: "#fff", fontWeight: 700 }}>{res.recipient_name}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                          <span style={{ color: "var(--text-faint)" }}>Risk Score:</span>
+                          <span style={{ color: "#fbbf24", fontWeight: 700 }}>{(res.risk_score * 100).toFixed(1)}%</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0" }}>
+                          <span style={{ color: "var(--text-faint)" }}>Reference ID:</span>
+                          <span style={{ fontFamily: "var(--font-mono)", color: "#a5b4fc" }}>{res.transaction_id}</span>
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", padding: "3px 0", borderTop: "1px solid rgba(255,255,255,0.05)", marginTop: 6, paddingTop: 6 }}>
+                          <span style={{ color: "var(--text-faint)" }}>Status:</span>
+                          <span style={{ color: "#fbbf24", fontWeight: 800 }}>⏳ Awaiting bank review</span>
+                        </div>
+                      </div>
 
-              {/* Signals Grid */}
-              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))", gap: 8, marginBottom: 12 }}>
-                {[
-                  { label: "Urgency", active: (res.communication_evidence.signals?.urgency ?? res.communication_evidence.urgency_score ?? 0) > 0 },
-                  { label: "Payment Solicitation", active: res.communication_evidence.signals?.payment_request ?? res.communication_evidence.payment_request_detected },
-                  { label: "Impersonation", active: res.communication_evidence.signals?.impersonation ?? res.communication_evidence.impersonation_indicator },
-                  { label: "Secrecy Instruction", active: res.communication_evidence.signals?.secrecy ?? res.communication_evidence.pressure_indicator },
-                  { label: "Call Discouraged", active: res.communication_evidence.signals?.verification_discouragement },
-                  { label: "Suspicious URL", active: res.communication_evidence.signals?.suspicious_url ?? res.communication_evidence.suspicious_link_detected }
-                ].map((s, idx) => (
-                  <div key={idx} style={{
-                    background: s.active ? "rgba(239, 68, 68, 0.15)" : "rgba(255, 255, 255, 0.03)",
-                    border: `1px solid ${s.active ? "rgba(239, 68, 68, 0.35)" : "var(--border-subtle)"}`,
-                    padding: "6px 8px",
-                    borderRadius: 6,
-                    fontSize: 11,
-                    color: s.active ? "#f87171" : "var(--text-faint)",
-                    fontWeight: s.active ? 600 : 400
-                  }}>
-                    {s.active ? "🚨" : "✓"} {s.label}
-                  </div>
-                ))}
-              </div>
+                      <div style={{
+                        background: "rgba(99, 102, 241, 0.1)",
+                        border: "1px solid rgba(99, 102, 241, 0.3)",
+                        borderRadius: 8,
+                        padding: "10px 12px",
+                        fontSize: 12,
+                        color: "#c7d2fe",
+                        textAlign: "left",
+                        marginBottom: 16
+                      }}>
+                        💡 <strong>Investigation Queue Active:</strong> A bank operations manager is currently reviewing the multi-agent signals. Switch to the <strong>Bank Operations</strong> tab above to approve or deny this case in real time!
+                      </div>
+                    </div>
+                  )}
 
-              {res.communication_evidence.evidence && res.communication_evidence.evidence.length > 0 && (
-                <ul style={{ paddingLeft: 18, fontSize: 13, color: "var(--text-muted)", lineHeight: 1.6 }}>
-                  {res.communication_evidence.evidence.map((ev, idx) => (
-                    <li key={idx}>{ev}</li>
-                  ))}
-                </ul>
+                  {/* Return Button */}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setCustStep(1);
+                      setRes(null);
+                      setCommAnalysis(null);
+                      setVf({ ...vf, communication_text: "" });
+                    }}
+                    style={{
+                      width: "100%",
+                      padding: "12px",
+                      background: "rgba(255, 255, 255, 0.08)",
+                      border: "1px solid var(--border-subtle)",
+                      borderRadius: "var(--radius-md)",
+                      color: "#fff",
+                      fontSize: 13,
+                      fontWeight: 600,
+                      cursor: "pointer"
+                    }}
+                  >
+                    Return to Transfers
+                  </button>
+                </div>
               )}
             </div>
-          )}
 
-          {/* Explainable AI Notice (Clean, research-defensible format) */}
-          <div style={{
-            background: "rgba(0, 0, 0, 0.3)",
-            border: "1px solid var(--border-subtle)",
-            borderRadius: "var(--radius-md)",
-            padding: 22,
-            marginBottom: 28
-          }}>
-            <h4 style={{ fontSize: 13, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", marginBottom: 12 }}>
-              🛡️ Customer Risk Assessment Notice (XAI Grounded)
-            </h4>
-            <div style={{
-              fontSize: 13.5,
-              color: "var(--text-muted)",
-              lineHeight: 1.8,
-              whiteSpace: "pre-wrap",
-              background: "rgba(0,0,0,0.25)",
-              padding: 16,
-              borderRadius: 8,
-              border: "1px solid var(--border-subtle)",
-              fontFamily: "var(--font-sans)"
-            }}>
-              {res.message}
+            {/* Android Navigation Pill */}
+            {useAndroidFrame && <div className="android-nav-pill" />}
+          </div>
+        </div>
+      )}
+
+      {/* =========================================================================
+          VIEW 2: BANK OPERATIONS & REVIEW QUEUE (Manager Console)
+         ========================================================================= */}
+      {activePortal === "manager" && (
+        <div className="animate-fade-in" style={{
+          background: "var(--bg-card)",
+          backdropFilter: "var(--glass-blur)",
+          border: "1px solid var(--border-subtle)",
+          borderRadius: "var(--radius-lg)",
+          padding: 28,
+          boxShadow: "0 20px 40px rgba(0,0,0,0.5)"
+        }}>
+          {/* Operations Header */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: 20, borderBottom: "1px solid var(--border-subtle)", marginBottom: 24 }}>
+            <div>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--accent-blue)", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                HUMAN-IN-THE-LOOP AGENTIC AI WORKFLOW
+              </div>
+              <h2 style={{ fontSize: 22, fontWeight: 800, color: "#fff", marginTop: 2 }}>
+                🛡️ Risk Shield — Bank Operations Console
+              </h2>
+            </div>
+
+            <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <div style={{
+                background: managerQueue.length > 0 ? "rgba(245, 158, 11, 0.15)" : "rgba(16, 185, 129, 0.15)",
+                border: `1px solid ${managerQueue.length > 0 ? "#f59e0b" : "#10b981"}`,
+                borderRadius: 20,
+                padding: "6px 14px",
+                fontSize: 13,
+                fontWeight: 700,
+                color: managerQueue.length > 0 ? "#fbbf24" : "#34d399"
+              }}>
+                Pending Investigations: {managerQueue.length}
+              </div>
             </div>
           </div>
 
-          {/* Reset / New Transfer */}
-          <button
-            onClick={() => {
-              setScreen(1);
-              setRes(null);
-              setCommAnalysis(null);
-              setF({ ...f, communication_text: "" });
-            }}
-            style={{
-              width: "100%",
-              padding: "14px 20px",
-              background: "rgba(255, 255, 255, 0.08)",
-              color: "#fff",
-              border: "1px solid var(--border-subtle)",
-              borderRadius: "var(--radius-md)",
-              fontSize: 15,
-              fontWeight: 600,
-              cursor: "pointer"
-            }}
-          >
-            ← Test Another Transfer Scenario
-          </button>
+          {/* Grid Layout: Left Queue List + Right Investigation Inspector */}
+          <div style={{ display: "grid", gridTemplateColumns: "320px 1fr", gap: 24 }}>
+            {/* Left Queue List */}
+            <div style={{ background: "rgba(0, 0, 0, 0.3)", borderRadius: "var(--radius-md)", border: "1px solid var(--border-subtle)", padding: 16 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", marginBottom: 12 }}>
+                Active Case Queue ({managerQueue.length})
+              </div>
+
+              {managerQueue.length === 0 ? (
+                <div style={{ textAlign: "center", padding: "30px 10px", color: "var(--text-faint)", fontSize: 13 }}>
+                  <div style={{ fontSize: 24, marginBottom: 8 }}>✓</div>
+                  No transactions currently on hold.
+                  <div style={{ fontSize: 11, marginTop: 4 }}>High-risk transfers flagged in the customer app appear here automatically.</div>
+                </div>
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                  {managerQueue.map((item) => {
+                    const isSelected = selectedCase && selectedCase.transaction_id === item.transaction_id;
+                    return (
+                      <div
+                        key={item.transaction_id}
+                        onClick={() => setSelectedCase(item)}
+                        style={{
+                          background: isSelected ? "rgba(99, 102, 241, 0.18)" : "rgba(255, 255, 255, 0.03)",
+                          border: `1px solid ${isSelected ? "var(--primary)" : "var(--border-subtle)"}`,
+                          borderRadius: 8,
+                          padding: "12px 14px",
+                          cursor: "pointer",
+                          transition: "all 0.15s"
+                        }}
+                      >
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 4 }}>
+                          <span style={{ fontSize: 13, fontWeight: 800, color: "#fff", fontFamily: "var(--font-mono)" }}>
+                            {item.transaction_id}
+                          </span>
+                          <span style={{ fontSize: 11, fontWeight: 700, color: "#fbbf24" }}>
+                            🟡 HOLD
+                          </span>
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                          Customer: {item.customer_name || "Harshit P."}
+                        </div>
+                        <div style={{ fontSize: 12, color: "var(--text-muted)" }}>
+                          Recipient: {item.recipient_name}
+                        </div>
+                        <div style={{ display: "flex", justifyContent: "space-between", marginTop: 6, fontSize: 12 }}>
+                          <span style={{ fontWeight: 700, color: "#fff" }}>${formatUSD(item.amount)}</span>
+                          <span style={{ color: getScoreColor(item.risk_score), fontWeight: 700 }}>
+                            Risk: {(item.risk_score * 100).toFixed(0)}%
+                          </span>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Right Case Inspection Card */}
+            <div>
+              {selectedCase ? (
+                <div style={{ background: "rgba(0, 0, 0, 0.35)", borderRadius: "var(--radius-md)", border: "1px solid var(--border-subtle)", padding: 24 }}>
+                  {/* Case Header */}
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", paddingBottom: 16, borderBottom: "1px solid var(--border-subtle)", marginBottom: 18 }}>
+                    <div>
+                      <div style={{ fontSize: 11, color: "var(--text-faint)", textTransform: "uppercase" }}>INVESTIGATION CASE</div>
+                      <h3 style={{ fontSize: 22, fontWeight: 800, color: "#fff", fontFamily: "var(--font-mono)", marginTop: 2 }}>
+                        {selectedCase.transaction_id}
+                      </h3>
+                    </div>
+                    <div style={{ textAlign: "right" }}>
+                      <div style={{ fontSize: 11, color: "var(--text-faint)" }}>COMBINED RISK SCORE</div>
+                      <div style={{ fontSize: 24, fontWeight: 900, color: getScoreColor(selectedCase.risk_score), fontFamily: "var(--font-mono)" }}>
+                        {(selectedCase.risk_score * 100).toFixed(1)}%
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Customer & Recipient Summary */}
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(3, 1fr)", gap: 14, marginBottom: 20 }}>
+                    <div style={{ background: "rgba(255,255,255,0.03)", padding: 12, borderRadius: 8 }}>
+                      <div style={{ fontSize: 11, color: "var(--text-faint)" }}>CUSTOMER</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginTop: 2 }}>
+                        {selectedCase.customer_name || "Harshit P."}
+                      </div>
+                    </div>
+                    <div style={{ background: "rgba(255,255,255,0.03)", padding: 12, borderRadius: 8 }}>
+                      <div style={{ fontSize: 11, color: "var(--text-faint)" }}>RECIPIENT</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#fff", marginTop: 2 }}>
+                        {selectedCase.recipient_name}
+                      </div>
+                    </div>
+                    <div style={{ background: "rgba(255,255,255,0.03)", padding: 12, borderRadius: 8 }}>
+                      <div style={{ fontSize: 11, color: "var(--text-faint)" }}>TRANSFER AMOUNT</div>
+                      <div style={{ fontSize: 14, fontWeight: 700, color: "#10b981", marginTop: 2, fontFamily: "var(--font-mono)" }}>
+                        ${formatUSD(selectedCase.amount)}
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Multi-Factor Risk Decomposition */}
+                  {selectedCase.risk_breakdown && (
+                    <div style={{ marginBottom: 20 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", marginBottom: 10 }}>
+                        Risk Factor Decomposition:
+                      </div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 10 }}>
+                        {[
+                          { label: "Transaction Risk", val: selectedCase.risk_breakdown.transaction_risk },
+                          { label: "Communication Signal", val: selectedCase.risk_breakdown.communication_signal_strength ?? selectedCase.risk_breakdown.communication_risk },
+                          { label: "Relationship Risk", val: selectedCase.risk_breakdown.relationship_risk },
+                          { label: "History Risk", val: selectedCase.risk_breakdown.history_risk }
+                        ].map((rf, idx) => (
+                          <div key={idx} style={{ background: "rgba(0,0,0,0.3)", padding: "10px 12px", borderRadius: 8, textAlign: "center" }}>
+                            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{rf.label}</div>
+                            <div style={{ fontSize: 16, fontWeight: 800, color: getScoreColor(rf.val || 0), fontFamily: "var(--font-mono)", marginTop: 4 }}>
+                              {((rf.val || 0) * 100).toFixed(0)}%
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* AI Evidence List */}
+                  {selectedCase.reasons && selectedCase.reasons.length > 0 && (
+                    <div style={{ marginBottom: 20 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", marginBottom: 8 }}>
+                        AI Forensic Evidence:
+                      </div>
+                      <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 8, padding: "12px 16px" }}>
+                        <ul style={{ paddingLeft: 18, color: "var(--text-muted)", fontSize: 13, lineHeight: 1.6 }}>
+                          {selectedCase.reasons.map((r, i) => (
+                            <li key={i}>{r}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Agent Audit Trail Summary */}
+                  {selectedCase.trace && selectedCase.trace.length > 0 && (
+                    <div style={{ marginBottom: 20 }}>
+                      <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", marginBottom: 8 }}>
+                        🔍 Agent Audit Trail:
+                      </div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {selectedCase.trace.map((step, idx) => (
+                          <div key={idx} style={{ background: "rgba(255,255,255,0.02)", borderRadius: 6, padding: "8px 12px", fontSize: 12, display: "flex", gap: 10 }}>
+                            <span style={{ color: "var(--text-faint)", fontFamily: "var(--font-mono)" }}>#{step.step || idx + 1}</span>
+                            <span style={{ fontWeight: 700, color: "#fff" }}>{step.agent || step.action}:</span>
+                            <span style={{ color: "var(--accent-blue)" }}>{step.summary || JSON.stringify(step.observation)}</span>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+
+                  {/* Manager Decision Controls */}
+                  <div style={{ borderTop: "1px solid var(--border-subtle)", paddingTop: 18 }}>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", marginBottom: 8 }}>
+                      Manager Decision & Investigation Action:
+                    </div>
+
+                    <textarea
+                      rows={2}
+                      value={managerNotes}
+                      onChange={(e) => setManagerNotes(e.target.value)}
+                      placeholder="Add investigation notes or rationale before making a decision..."
+                      style={{
+                        width: "100%",
+                        padding: "10px 12px",
+                        background: "rgba(0,0,0,0.4)",
+                        border: "1px solid var(--border-subtle)",
+                        borderRadius: 6,
+                        color: "#fff",
+                        fontSize: 13,
+                        marginBottom: 14
+                      }}
+                    />
+
+                    <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr 1fr", gap: 12 }}>
+                      <button
+                        type="button"
+                        onClick={() => handleManagerAction("APPROVE")}
+                        disabled={actionBusy}
+                        style={{
+                          padding: "12px",
+                          background: "linear-gradient(135deg, #10b981, #059669)",
+                          border: 0,
+                          borderRadius: 8,
+                          color: "#fff",
+                          fontSize: 13,
+                          fontWeight: 800,
+                          cursor: actionBusy ? "not-allowed" : "pointer"
+                        }}
+                      >
+                        ✓ APPROVE TRANSFER
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleManagerAction("DENY")}
+                        disabled={actionBusy}
+                        style={{
+                          padding: "12px",
+                          background: "linear-gradient(135deg, #e11d48, #be123c)",
+                          border: 0,
+                          borderRadius: 8,
+                          color: "#fff",
+                          fontSize: 13,
+                          fontWeight: 800,
+                          cursor: actionBusy ? "not-allowed" : "pointer"
+                        }}
+                      >
+                        🚫 DENY / STOP TRANSFER
+                      </button>
+
+                      <button
+                        type="button"
+                        onClick={() => handleManagerAction("REQUEST_INFO")}
+                        disabled={actionBusy}
+                        style={{
+                          padding: "12px",
+                          background: "rgba(255, 255, 255, 0.08)",
+                          border: "1px solid var(--border-subtle)",
+                          borderRadius: 8,
+                          color: "#fff",
+                          fontSize: 13,
+                          fontWeight: 600,
+                          cursor: actionBusy ? "not-allowed" : "pointer"
+                        }}
+                      >
+                        ❓ REQUEST MORE INFO
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div style={{ textAlign: "center", padding: 60, color: "var(--text-faint)" }}>
+                  Select a transaction case from the queue on the left to review.
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
