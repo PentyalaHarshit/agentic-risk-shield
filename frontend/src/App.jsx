@@ -50,9 +50,53 @@ const formatUSD = (val) => {
   return num.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 };
 
+const THEMES = {
+  ribbon: {
+    id: "ribbon",
+    label: "🔴🔵 Royal & Crimson",
+    boxBg: "linear-gradient(135deg, rgba(10, 25, 47, 0.94) 0%, rgba(26, 54, 110, 0.88) 35%, rgba(136, 19, 55, 0.72) 75%, rgba(15, 23, 42, 0.96) 100%)",
+    border: "1.5px solid rgba(56, 189, 248, 0.55)",
+    boxShadow: "0 25px 65px rgba(0, 0, 0, 0.7), 0 0 50px rgba(37, 99, 235, 0.45), 0 0 90px rgba(225, 29, 72, 0.28)",
+    topRibbon: "linear-gradient(90deg, #1d4ed8 0%, #38bdf8 30%, #f43f5e 70%, #e11d48 100%)",
+    navBg: "linear-gradient(90deg, rgba(30, 58, 138, 0.7) 0%, rgba(190, 18, 60, 0.45) 100%)",
+    balanceBg: "linear-gradient(135deg, rgba(30, 64, 175, 0.6) 0%, rgba(15, 23, 42, 0.85) 55%, rgba(159, 18, 57, 0.45) 100%)",
+    balanceBorder: "1px solid rgba(56, 189, 248, 0.5)",
+    primaryBtn: "linear-gradient(135deg, #0284c7 0%, #2563eb 45%, #e11d48 100%)",
+    primaryBtnGlow: "0 0 25px rgba(37, 99, 235, 0.55)"
+  },
+  cyber: {
+    id: "cyber",
+    label: "🟣 Cyber Indigo",
+    boxBg: "linear-gradient(135deg, rgba(17, 24, 39, 0.95) 0%, rgba(67, 56, 202, 0.84) 45%, rgba(147, 51, 234, 0.72) 80%, rgba(15, 23, 42, 0.96) 100%)",
+    border: "1.5px solid rgba(168, 85, 247, 0.55)",
+    boxShadow: "0 25px 65px rgba(0, 0, 0, 0.7), 0 0 50px rgba(99, 102, 241, 0.5), 0 0 90px rgba(168, 85, 247, 0.35)",
+    topRibbon: "linear-gradient(90deg, #6366f1 0%, #a855f7 50%, #ec4899 100%)",
+    navBg: "linear-gradient(90deg, rgba(67, 56, 202, 0.7) 0%, rgba(147, 51, 234, 0.45) 100%)",
+    balanceBg: "linear-gradient(135deg, rgba(67, 56, 202, 0.55) 0%, rgba(15, 23, 42, 0.85) 60%, rgba(147, 51, 234, 0.45) 100%)",
+    balanceBorder: "1px solid rgba(168, 85, 247, 0.5)",
+    primaryBtn: "linear-gradient(135deg, #6366f1 0%, #a855f7 50%, #ec4899 100%)",
+    primaryBtnGlow: "0 0 25px rgba(168, 85, 247, 0.55)"
+  },
+  emerald: {
+    id: "emerald",
+    label: "🟢 Emerald & Gold",
+    boxBg: "linear-gradient(135deg, rgba(6, 78, 59, 0.94) 0%, rgba(15, 23, 42, 0.94) 50%, rgba(120, 53, 15, 0.8) 100%)",
+    border: "1.5px solid rgba(52, 211, 153, 0.55)",
+    boxShadow: "0 25px 65px rgba(0, 0, 0, 0.7), 0 0 50px rgba(16, 185, 129, 0.45), 0 0 90px rgba(245, 158, 11, 0.3)",
+    topRibbon: "linear-gradient(90deg, #059669 0%, #10b981 40%, #f59e0b 100%)",
+    navBg: "linear-gradient(90deg, rgba(6, 78, 59, 0.7) 0%, rgba(120, 53, 15, 0.45) 100%)",
+    balanceBg: "linear-gradient(135deg, rgba(6, 78, 59, 0.6) 0%, rgba(15, 23, 42, 0.85) 60%, rgba(120, 53, 15, 0.45) 100%)",
+    balanceBorder: "1px solid rgba(52, 211, 153, 0.5)",
+    primaryBtn: "linear-gradient(135deg, #059669 0%, #10b981 50%, #f59e0b 100%)",
+    primaryBtnGlow: "0 0 25px rgba(16, 185, 129, 0.55)"
+  }
+};
+
 export default function App() {
   // Navigation: "customer" (banking portal view) vs "manager" (bank operations console)
   const [activePortal, setActivePortal] = useState("customer");
+  const [boxTheme, setBoxTheme] = useState("ribbon");
+  const currentTheme = THEMES[boxTheme] || THEMES.ribbon;
 
   // Customer app step:
   // 1: Search Recipient by Phone/Email
@@ -465,21 +509,59 @@ export default function App() {
           VIEW 1: CUSTOMER BANKING WEB PORTAL
          ========================================================================= */}
       {activePortal === "customer" && (
-        <div className="animate-fade-in" style={{
-          background: "rgba(15, 23, 42, 0.85)",
-          backdropFilter: "blur(20px)",
-          border: "1px solid rgba(255, 255, 255, 0.12)",
-          borderRadius: "var(--radius-lg)",
-          maxWidth: 820,
-          margin: "0 auto",
-          boxShadow: "0 25px 60px rgba(0, 0, 0, 0.55), 0 0 35px rgba(56, 189, 248, 0.1)",
-          overflow: "hidden"
-        }}>
-          {/* In-App Customer Navigation Bar */}
+        <div style={{ maxWidth: 840, margin: "0 auto" }}>
+          {/* Box Style Selector */}
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, padding: "0 4px" }}>
+            <div style={{ fontSize: 13, color: "#fff", display: "flex", alignItems: "center", gap: 6, fontWeight: 700, textShadow: "0 1px 4px rgba(0,0,0,0.9)" }}>
+              <span>✨</span>
+              <span>QuickPay Transfer Portal</span>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <span style={{ fontSize: 11, fontWeight: 700, color: "rgba(255, 255, 255, 0.85)", textShadow: "0 1px 3px rgba(0,0,0,0.8)" }}>
+                🎨 Box Color:
+              </span>
+              {Object.values(THEMES).map(t => (
+                <button
+                  key={t.id}
+                  type="button"
+                  onClick={() => setBoxTheme(t.id)}
+                  style={{
+                    padding: "5px 12px",
+                    borderRadius: 16,
+                    border: boxTheme === t.id ? "1.5px solid #38bdf8" : "1px solid rgba(255,255,255,0.25)",
+                    background: boxTheme === t.id ? "rgba(56, 189, 248, 0.3)" : "rgba(0,0,0,0.5)",
+                    color: "#fff",
+                    fontSize: 11,
+                    fontWeight: boxTheme === t.id ? 700 : 500,
+                    cursor: "pointer",
+                    backdropFilter: "blur(8px)",
+                    boxShadow: boxTheme === t.id ? "0 0 14px rgba(56, 189, 248, 0.55)" : "none"
+                  }}
+                >
+                  {t.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Big Colorful Rectangle Box */}
+          <div className="animate-fade-in" style={{
+            background: currentTheme.boxBg,
+            backdropFilter: "blur(24px)",
+            border: currentTheme.border,
+            borderRadius: "var(--radius-lg)",
+            boxShadow: currentTheme.boxShadow,
+            overflow: "hidden",
+            transition: "all 0.3s ease"
+          }}>
+            {/* Top Glowing Ribbon Stripe */}
+            <div style={{ height: 5, background: currentTheme.topRibbon, width: "100%" }} />
+
+            {/* In-App Customer Navigation Bar */}
             <div style={{
-              padding: "16px 20px 14px",
-              background: "linear-gradient(180deg, rgba(30, 41, 59, 0.9) 0%, rgba(15, 23, 42, 0.7) 100%)",
-              borderBottom: "1px solid rgba(255, 255, 255, 0.06)",
+              padding: "16px 22px 14px",
+              background: currentTheme.navBg,
+              borderBottom: "1px solid rgba(255, 255, 255, 0.08)",
               display: "flex",
               alignItems: "center",
               justifyContent: "space-between"
@@ -524,25 +606,26 @@ export default function App() {
               </div>
             </div>
 
-            <div style={{ padding: "20px 20px 30px" }}>
+            <div style={{ padding: "22px 24px 32px" }}>
               {/* Account Balance Card */}
               <div style={{
-                background: "linear-gradient(135deg, #1e293b, #0f172a)",
-                border: "1px solid var(--border-subtle)",
+                background: currentTheme.balanceBg,
+                border: currentTheme.balanceBorder,
                 borderRadius: "var(--radius-md)",
-                padding: "14px 16px",
-                marginBottom: 20,
+                padding: "16px 20px",
+                marginBottom: 22,
                 display: "flex",
                 justifyContent: "space-between",
-                alignItems: "center"
+                alignItems: "center",
+                boxShadow: "0 8px 24px rgba(0,0,0,0.3)"
               }}>
                 <div>
-                  <div style={{ fontSize: 11, color: "var(--text-faint)", textTransform: "uppercase" }}>FROM ACCOUNT</div>
-                  <div style={{ fontSize: 14, fontWeight: 700, color: "#fff" }}>Advantage Checking (...8492)</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", textTransform: "uppercase", letterSpacing: 0.5 }}>FROM ACCOUNT</div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>Advantage Checking (...8492)</div>
                 </div>
                 <div style={{ textAlign: "right" }}>
-                  <div style={{ fontSize: 11, color: "var(--text-faint)" }}>AVAILABLE</div>
-                  <div style={{ fontSize: 15, fontWeight: 800, color: "#10b981", fontFamily: "var(--font-mono)" }}>$14,250.00</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", letterSpacing: 0.5 }}>AVAILABLE</div>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: "#34d399", fontFamily: "var(--font-mono)" }}>$14,250.00</div>
                 </div>
               </div>
 
@@ -658,14 +741,16 @@ export default function App() {
                     disabled={searching || !searchQuery.trim()}
                     style={{
                       width: "100%",
-                      padding: "13px",
-                      background: "linear-gradient(135deg, #0056b3, #38bdf8)",
+                      padding: "14px",
+                      background: currentTheme.primaryBtn,
                       border: 0,
                       borderRadius: "var(--radius-md)",
                       color: "#fff",
                       fontSize: 14,
-                      fontWeight: 700,
-                      cursor: searching ? "not-allowed" : "pointer"
+                      fontWeight: 800,
+                      cursor: searching ? "not-allowed" : "pointer",
+                      boxShadow: currentTheme.primaryBtnGlow,
+                      letterSpacing: "0.5px"
                     }}
                   >
                     {searching ? "Searching Directory…" : "FIND RECIPIENT →"}
@@ -906,14 +991,16 @@ export default function App() {
                     disabled={busy || !tx.amount}
                     style={{
                       width: "100%",
-                      padding: "13px",
-                      background: "linear-gradient(135deg, #6366f1, #4f46e5)",
+                      padding: "14px",
+                      background: currentTheme.primaryBtn,
                       border: 0,
                       borderRadius: "var(--radius-md)",
                       color: "#fff",
                       fontSize: 14,
-                      fontWeight: 700,
-                      cursor: busy ? "not-allowed" : "pointer"
+                      fontWeight: 800,
+                      cursor: busy ? "not-allowed" : "pointer",
+                      boxShadow: currentTheme.primaryBtnGlow,
+                      letterSpacing: "0.5px"
                     }}
                   >
                     {busy ? "Evaluating Real-Time Risk Model…" : "CONTINUE TO TRANSFER →"}
@@ -1315,6 +1402,7 @@ export default function App() {
                 </div>
               )}
             </div>
+          </div>
         </div>
       )}
 
