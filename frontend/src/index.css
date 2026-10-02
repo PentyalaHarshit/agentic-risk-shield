@@ -34,11 +34,13 @@
 }
 
 body {
-  background-color: var(--bg-primary);
+  background-color: #0b1329;
   background-image: 
-    radial-gradient(at 0% 0%, rgba(30, 58, 138, 0.22) 0px, transparent 50%),
-    radial-gradient(at 100% 0%, rgba(56, 189, 248, 0.14) 0px, transparent 50%),
-    radial-gradient(at 50% 100%, rgba(99, 102, 241, 0.12) 0px, transparent 50%);
+    linear-gradient(180deg, rgba(11, 19, 41, 0.65) 0%, rgba(8, 12, 22, 0.82) 100%),
+    url('/background.png');
+  background-size: cover;
+  background-position: center top;
+  background-repeat: no-repeat;
   background-attachment: fixed;
   color: var(--text-main);
   font-family: var(--font-sans);
