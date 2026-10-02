@@ -158,3 +158,62 @@ input, select, textarea {
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(255, 255, 255, 0.3);
 }
+
+/* Biometric Face ID & OTP Animations */
+@keyframes scanline {
+  0% { top: 4%; opacity: 0.9; }
+  50% { opacity: 0.6; }
+  100% { top: 94%; opacity: 0.9; }
+}
+
+@keyframes radarRotate {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@keyframes reticlePulse {
+  0%, 100% { transform: scale(1); opacity: 0.8; }
+  50% { transform: scale(1.03); opacity: 1; }
+}
+
+.biometric-scanline {
+  position: absolute;
+  left: 5%;
+  right: 5%;
+  height: 3px;
+  background: linear-gradient(90deg, transparent, #38bdf8, #818cf8, #f43f5e, transparent);
+  box-shadow: 0 0 16px #38bdf8, 0 0 24px #818cf8;
+  animation: scanline 2.2s ease-in-out infinite alternate;
+  z-index: 5;
+  pointer-events: none;
+}
+
+.biometric-radar {
+  animation: radarRotate 4s linear infinite;
+}
+
+.biometric-reticle {
+  animation: reticlePulse 2s ease-in-out infinite;
+}
+
+.otp-digit-input {
+  width: 48px;
+  height: 56px;
+  background: rgba(0, 0, 0, 0.5);
+  border: 1.5px solid rgba(56, 189, 248, 0.4);
+  border-radius: 10px;
+  color: #fff;
+  font-size: 24px;
+  font-weight: 800;
+  text-align: center;
+  font-family: var(--font-mono);
+  transition: all 0.2s ease;
+  outline: none;
+}
+
+.otp-digit-input:focus {
+  border-color: #38bdf8;
+  box-shadow: 0 0 15px rgba(56, 189, 248, 0.5);
+  background: rgba(15, 23, 42, 0.7);
+}
+

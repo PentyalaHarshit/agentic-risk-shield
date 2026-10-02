@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import AuthPortal from "./AuthPortal";
 
 const API = import.meta.env.VITE_API || "http://localhost:8000";
 
@@ -97,6 +98,32 @@ export default function App() {
   const [activePortal, setActivePortal] = useState("customer");
   const [boxTheme, setBoxTheme] = useState("ribbon");
   const currentTheme = THEMES[boxTheme] || THEMES.ribbon;
+
+  // Authentication State (Bank of America Style & Face ID)
+  const [currentUser, setCurrentUser] = useState(() => {
+    try {
+      const saved = localStorage.getItem("risk_shield_user");
+      return saved ? JSON.parse(saved) : null;
+    } catch {
+      return null;
+    }
+  });
+
+  const handleLogout = () => {
+    setCurrentUser(null);
+    localStorage.removeItem("risk_shield_user");
+    setCustStep(1);
+    setRes(null);
+  };
+
+  useEffect(() => {
+    if (currentUser) {
+      setTx((prev) => ({
+        ...prev,
+        customer_name: currentUser.full_name
+      }));
+    }
+  }, [currentUser]);
 
   // Customer app step:
   // 1: Search Recipient by Phone/Email
@@ -473,16 +500,46 @@ export default function App() {
           </button>
         </div>
 
-        {/* System Status Pill */}
-        <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
-          <span style={{
-            width: 8,
-            height: 8,
-            borderRadius: "50%",
-            background: apiOnline ? "#10b981" : "#ef4444",
-            boxShadow: apiOnline ? "0 0 8px #10b981" : "none"
-          }} />
-          <span>Engine: {apiOnline ? "Active" : "Offline"}</span>
+        {/* System Status Pill & Auth User Pill */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6, fontSize: 12, color: "var(--text-muted)" }}>
+            <span style={{
+              width: 8,
+              height: 8,
+              borderRadius: "50%",
+              background: apiOnline ? "#10b981" : "#ef4444",
+              boxShadow: apiOnline ? "0 0 8px #10b981" : "none"
+            }} />
+            <span>Engine: {apiOnline ? "Active" : "Offline"}</span>
+          </div>
+
+          {currentUser ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 10, background: "rgba(255, 255, 255, 0.06)", padding: "4px 12px", borderRadius: 20, border: "1px solid var(--border-subtle)" }}>
+              <span style={{ fontSize: 12, color: "#fff", fontWeight: 700, display: "flex", alignItems: "center", gap: 5 }}>
+                <span>👤</span> {currentUser.full_name}
+              </span>
+              <button
+                type="button"
+                onClick={handleLogout}
+                style={{
+                  background: "rgba(239, 68, 68, 0.2)",
+                  border: "1px solid rgba(239, 68, 68, 0.4)",
+                  borderRadius: 12,
+                  color: "#fca5a5",
+                  fontSize: 11,
+                  padding: "2px 8px",
+                  cursor: "pointer",
+                  fontWeight: 700
+                }}
+              >
+                Sign Out
+              </button>
+            </div>
+          ) : (
+            <div style={{ fontSize: 11, color: "var(--accent-blue)", background: "rgba(56, 189, 248, 0.12)", padding: "3px 10px", borderRadius: 12, border: "1px solid rgba(56, 189, 248, 0.3)" }}>
+              🔒 Sign In Required
+            </div>
+          )}
         </div>
       </header>
 
@@ -506,16 +563,34 @@ export default function App() {
       )}
 
       {/* =========================================================================
-          VIEW 1: CUSTOMER BANKING WEB PORTAL
+          VIEW 1: CUSTOMER BANKING WEB PORTAL (AUTH OR TRANSFERS)
          ========================================================================= */}
-      {activePortal === "customer" && (
+      {activePortal === "customer" && !currentUser && (
+        <AuthPortal
+          API={API}
+          currentTheme={currentTheme}
+          onLoginSuccess={(user) => {
+            setCurrentUser(user);
+            localStorage.setItem("risk_shield_user", JSON.stringify(user));
+          }}
+          setErr={setErr}
+        />
+      )}
+
+      {activePortal === "customer" && currentUser && (
         <div style={{ maxWidth: 840, margin: "0 auto" }}>
-          {/* Box Style Selector */}
+          {/* User Status Bar & Box Style Selector */}
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12, padding: "0 4px" }}>
-            <div style={{ fontSize: 13, color: "#fff", display: "flex", alignItems: "center", gap: 6, fontWeight: 700, textShadow: "0 1px 4px rgba(0,0,0,0.9)" }}>
-              <span>✨</span>
-              <span>QuickPay Transfer Portal</span>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <div style={{ fontSize: 13, color: "#fff", display: "flex", alignItems: "center", gap: 6, fontWeight: 700, textShadow: "0 1px 4px rgba(0,0,0,0.9)" }}>
+                <span>✨</span>
+                <span>QuickPay Transfer Portal</span>
+              </div>
+              <span style={{ fontSize: 11, color: "#34d399", background: "rgba(16, 185, 129, 0.15)", border: "1px solid rgba(16, 185, 129, 0.35)", padding: "2px 8px", borderRadius: 10, fontWeight: 700 }}>
+                ✓ Authenticated
+              </span>
             </div>
+
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <span style={{ fontSize: 11, fontWeight: 700, color: "rgba(255, 255, 255, 0.85)", textShadow: "0 1px 3px rgba(0,0,0,0.8)" }}>
                 🎨 Box Color:
@@ -620,12 +695,18 @@ export default function App() {
                 boxShadow: "0 8px 24px rgba(0,0,0,0.3)"
               }}>
                 <div>
-                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", textTransform: "uppercase", letterSpacing: 0.5 }}>FROM ACCOUNT</div>
-                  <div style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>Advantage Checking (...8492)</div>
+                  <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", textTransform: "uppercase", letterSpacing: 0.5 }}>
+                    {currentUser.full_name} • FROM ACCOUNT
+                  </div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: "#fff" }}>
+                    {currentUser.account_number || "Advantage Checking (...8492)"}
+                  </div>
                 </div>
                 <div style={{ textAlign: "right" }}>
                   <div style={{ fontSize: 11, color: "rgba(255,255,255,0.7)", letterSpacing: 0.5 }}>AVAILABLE</div>
-                  <div style={{ fontSize: 17, fontWeight: 800, color: "#34d399", fontFamily: "var(--font-mono)" }}>$14,250.00</div>
+                  <div style={{ fontSize: 17, fontWeight: 800, color: "#34d399", fontFamily: "var(--font-mono)" }}>
+                    ${formatUSD(currentUser.balance || 14250)}
+                  </div>
                 </div>
               </div>
 

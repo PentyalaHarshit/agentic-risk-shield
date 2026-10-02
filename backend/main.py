@@ -14,6 +14,17 @@ from schemas.transaction import (
 from agents.orchestrator import Orchestrator
 from recipient_directory import lookup_recipient, list_sample_recipients
 
+from auth import (
+    AuthService,
+    RegisterIn,
+    VerifyOtpIn,
+    EnrollFaceIn,
+    LoginPasswordIn,
+    LoginFaceIn,
+    AuthSessionOut,
+    UserProfile
+)
+
 app = FastAPI(title="Real-Time Agentic Financial Risk Platform")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 orch = Orchestrator()
@@ -131,3 +142,61 @@ def metrics():
         "p95_ms": lat[max(int(len(lat) * 0.95) - 1, 0)],
         "held_count": len(orch.get_manager_queue())
     }
+
+
+# ---------- Bank of America Style Authentication & Biometric Face ID ----------
+@app.post("/api/auth/register")
+def register_user(data: RegisterIn):
+    try:
+        return AuthService.register(data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/auth/verify-otp")
+def verify_user_otp(data: VerifyOtpIn):
+    try:
+        return AuthService.verify_otp(data.user_id, data.code)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/auth/resend-otp")
+def resend_user_otp(req: dict):
+    uid = req.get("user_id")
+    if not uid:
+        raise HTTPException(400, "Missing user_id")
+    try:
+        return AuthService.resend_otp(uid)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/auth/enroll-face")
+def enroll_face_id(data: EnrollFaceIn):
+    try:
+        return AuthService.enroll_face(data)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+
+
+@app.post("/api/auth/login-password", response_model=AuthSessionOut)
+def login_with_password(data: LoginPasswordIn):
+    try:
+        return AuthService.login_password(data.user_id, data.password)
+    except ValueError as e:
+        raise HTTPException(401, str(e))
+
+
+@app.post("/api/auth/login-face", response_model=AuthSessionOut)
+def login_with_face_id(data: LoginFaceIn):
+    try:
+        return AuthService.login_face(data.user_id, data.face_sample)
+    except ValueError as e:
+        raise HTTPException(401, str(e))
+
+
+@app.get("/api/auth/me", response_model=Optional[UserProfile])
+def get_current_user(token: str = Query(...)):
+    return AuthService.get_user_from_token(token)
+
