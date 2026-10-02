@@ -5,7 +5,8 @@ A real-time two-stage financial transaction security platform combining behavior
 Inspired by modern banking verification flows (such as Bank of America / Wells Fargo / Zelle recipient lookups and fraud review policies), without using proprietary code or trademarks.
 
 ```
-                 React Customer App (Android / Mobile View)
+                   React Customer Banking Web Portal
+             (Corporate Skyline Background & Dynamic Themes)
                                      │
                                      ▼
                 Search Recipient by Phone Number or Email
@@ -93,6 +94,18 @@ Risk Assessment -> HOLD -> 👨‍💼 Bank Operations -> Senior Risk Investigat
 - Automatically routed to the **Bank Review Queue** in the Bank Operations Console.
 - Senior Risk Investigator inspects the multi-agent audit trail, communication forensics, and policy grounds, then executes the final operational decision (`APPROVE` or `DENY`).
 - The customer's mobile banking screen updates live via reactive polling as soon as the manager decides.
+
+---
+
+## Frontend Design & Visual Aesthetics
+
+- **Corporate Financial Skyline & Growth Chart Background**: Institutional banking skyline wallpaper featuring rising sun, market growth candlesticks, and royal blue / crimson framing ribbons.
+- **Colorful Rectangle Box Themes**:
+  - **🔴🔵 Royal & Crimson Ribbon**: Multi-color navy/blue/crimson gradient body with a 5px glowing top ribbon band and ambient drop shadows matching the background ribbons.
+  - **🟣 Cyber Indigo & Violet**: High-tech fintech gradient with violet/indigo border glow.
+  - **🟢 Emerald & Gold**: Classic banking trust theme with rich emerald and amber tones.
+  - **Interactive Theme Switcher**: Instant real-time preview directly from the header toolbar.
+- **Privacy-Safe Recipient Identity Card**: Displays masked phone (`+1 (214) ***-1641`), masked email (`r***@gmail.com`), location, and network verification badges prior to initiating transfers.
 
 ---
 
