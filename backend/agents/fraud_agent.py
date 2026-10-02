@@ -7,5 +7,8 @@ class FraudAgent:
 
     def run(self, vector, stage=1) -> dict:
         obs = risk_model.predict(vector, stage)
-        obs["top_factors"] = risk_model.top_factors(vector, stage)
+        shap_info = risk_model.explain_shap(vector, stage)
+        obs["top_factors"] = shap_info["top_factors"]
+        obs["shap_attributions"] = shap_info["feature_attributions"]
+        obs["base_value"] = shap_info["base_value"]
         return obs

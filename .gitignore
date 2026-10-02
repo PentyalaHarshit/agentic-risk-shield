@@ -46,3 +46,7 @@ Thumbs.db
 *.db
 *.sqlite3
 backend/*.db
+
+# Binary artifacts
+*.exe
+*.joblib

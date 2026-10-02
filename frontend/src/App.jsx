@@ -1,5 +1,7 @@
 import { useState, useEffect } from "react";
 import AuthPortal from "./AuthPortal";
+import ResearchPortal from "./ResearchPortal";
+import ShapExplanationCard from "./ShapExplanationCard";
 
 const API = import.meta.env.VITE_API || "http://localhost:8000";
 
@@ -518,6 +520,26 @@ export default function App() {
                 {managerQueue.length}
               </span>
             )}
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActivePortal("research")}
+            style={{
+              padding: "7px 16px",
+              borderRadius: 20,
+              border: 0,
+              background: activePortal === "research" ? "linear-gradient(135deg, #0ea5e9, #2563eb)" : "transparent",
+              color: activePortal === "research" ? "#fff" : "var(--text-muted)",
+              fontSize: 13,
+              fontWeight: 600,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              gap: 6
+            }}
+          >
+            <span>🧪</span> Research Workbench
           </button>
         </div>
 
@@ -1510,6 +1532,16 @@ export default function App() {
                     </div>
                   )}
 
+                  {/* SHAP Explainable AI Attribution */}
+                  {res && res.shap_attributions && (
+                    <div style={{ marginBottom: 16 }}>
+                      <ShapExplanationCard
+                        shapAttributions={res.shap_attributions}
+                        riskScore={res.risk_score}
+                      />
+                    </div>
+                  )}
+
                   {/* Return Button */}
                   <button
                     type="button"
@@ -1718,6 +1750,16 @@ export default function App() {
                     </div>
                   )}
 
+                  {/* SHAP Explainable AI Feature Attribution */}
+                  {selectedCase.shap_attributions && selectedCase.shap_attributions.length > 0 && (
+                    <div style={{ marginBottom: 20 }}>
+                      <ShapExplanationCard
+                        shapAttributions={selectedCase.shap_attributions}
+                        riskScore={selectedCase.risk_score}
+                      />
+                    </div>
+                  )}
+
                   {/* Agent Audit Trail Summary */}
                   {selectedCase.trace && selectedCase.trace.length > 0 && (
                     <div style={{ marginBottom: 20 }}>
@@ -1824,6 +1866,13 @@ export default function App() {
             </div>
           </div>
         </div>
+      )}
+
+      {/* =========================================================================
+          VIEW 3: RESEARCH WORKBENCH & BENCHMARKS (12-POINT RESEARCH UPGRADE)
+         ========================================================================= */}
+      {activePortal === "research" && (
+        <ResearchPortal onSwitchToCustomer={() => setActivePortal("customer")} />
       )}
     </div>
   );

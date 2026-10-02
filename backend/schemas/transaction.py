@@ -142,4 +142,5 @@ class AssessmentOut(BaseModel):
     risk_breakdown: Optional[RiskBreakdown] = None
     communication_evidence: Optional[CommunicationEvidence] = None
     manager_decision: Optional[Dict[str, Any]] = None
+    shap_attributions: Optional[List[Dict[str, Any]]] = None
     created_at: Optional[float] = None

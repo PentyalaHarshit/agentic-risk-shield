@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from typing import List, Optional
@@ -243,4 +244,154 @@ def login_with_face_id(data: LoginFaceIn):
 @app.get("/api/auth/me", response_model=Optional[UserProfile])
 def get_current_user(token: str = Query(...)):
     return AuthService.get_user_from_token(token)
+
+
+# =====================================================================
+# Research Workbench Endpoints (12-Point Research Framework)
+# =====================================================================
+from ml.baselines import get_baseline_evaluator
+from ml.adaptive_thresholds import get_optimizer
+from ml.ablation_study import get_ablation_runner
+from rag.rag_evaluator import get_rag_evaluator
+from benchmarks.engine_bench import get_performance_benchmark
+from research.failure_analysis import FailureAnalysisService
+import pandas as pd
+
+@app.get("/api/research/problem")
+def get_research_problem():
+    """Defines the central research question, hypothesis, and core contributions."""
+    return {
+        "title": "A Two-Stage Agentic Risk Assessment Framework for Real-Time Financial Transactions",
+        "central_research_question": "Can a two-stage adaptive transaction-risk system reduce unnecessary customer verification while maintaining strong risk-detection performance?",
+        "hypothesis": "By decoupling lightweight statistical screening (Stage 1) from deep multi-agent evidence fusion and RAG policy grounding (Stage 2), banks can reduce customer verification friction by over 75% while detecting sophisticated social-engineering scams that bypass traditional rules and single-stage ML.",
+        "primary_contributions": [
+            {
+                "id": 1,
+                "title": "Adaptive Two-Stage Risk Routing",
+                "description": "Data-driven, cost-optimal routing separates very low-risk transactions (zero customer friction) from suspicious transactions requiring multi-agent forensic verification."
+            },
+            {
+                "id": 2,
+                "title": "Multi-Agent Evidence Fusion",
+                "description": "Transaction, Communication, Relationship, and History Agents independently gather and interpret evidence before statistical calibration, eliminating uncontrolled LLM hallucinations in financial decisions."
+            },
+            {
+                "id": 3,
+                "title": "Human-Grounded Decision Pipeline",
+                "description": "Calibrated ML + SHAP XAI + RAG policy retrieval + bank operations investigator review rather than allowing an LLM to make an uncontrolled financial decision."
+            }
+        ],
+        "architectural_separation": {
+            "authentication_layer": "Bank-of-America style registration, OTP verification, Biometric Face ID, and Passkey",
+            "risk_research_layer": "Stage 1 Screening -> Adaptive Corridors -> Multi-Agent Swarm -> SHAP -> RAG -> Human Review"
+        }
+    }
+
+
+@app.get("/api/research/dataset")
+def get_dataset_metadata():
+    """Returns synthetic benchmark dataset attributes, schema, and sample records."""
+    csv_path = os.path.join(os.path.dirname(__file__), "..", "data", "synthetic_transactions.csv")
+    if not os.path.exists(csv_path):
+        from data.generate_dataset import save_benchmark_dataset
+        csv_path = save_benchmark_dataset()
+
+    df = pd.read_csv(csv_path)
+    total_tx = len(df)
+    fraud_cases = int(df["fraud_label"].sum())
+    fraud_pct = round(float(fraud_cases / total_tx * 100), 2)
+    sample_rows = df.head(10).to_dict(orient="records")
+
+    fields = [
+        {"name": "transaction_id", "type": "string", "description": "Unique transaction tracking identifier"},
+        {"name": "customer_id", "type": "string", "description": "Originating banking customer ID"},
+        {"name": "recipient_id", "type": "string", "description": "Destination counterparty ID"},
+        {"name": "amount", "type": "float", "description": "Transaction value in USD (Pareto lognormal distribution)"},
+        {"name": "hour", "type": "int", "description": "Time of day (0-23) for temporal pattern analysis"},
+        {"name": "day_of_week", "type": "int", "description": "Day of week (0=Mon, 6=Sun)"},
+        {"name": "account_age", "type": "int", "description": "Sender account age in days"},
+        {"name": "recipient_age", "type": "int", "description": "Recipient account age in days (new vs seasoned)"},
+        {"name": "recipient_new", "type": "binary", "description": "1 if first-time transfer to counterparty, 0 otherwise"},
+        {"name": "previous_transaction_count", "type": "int", "description": "Historical transfer count between customer and recipient"},
+        {"name": "average_transfer_amount", "type": "float", "description": "Customer 90-day typical transfer baseline"},
+        {"name": "transfer_velocity", "type": "int", "description": "Total transfer count initiated in trailing 24 hours"},
+        {"name": "location_distance", "type": "float", "description": "Geographical deviation distance in kilometers"},
+        {"name": "device_change", "type": "binary", "description": "1 if transfer from unrecognized device fingerprint"},
+        {"name": "failed_login_count", "type": "int", "description": "Consecutive failed authentication attempts prior to transfer"},
+        {"name": "communication_signal", "type": "float", "description": "Normalized conversational urgency / payment pressure [0.0, 1.0]"},
+        {"name": "historical_risk", "type": "float", "description": "Prior behavioral risk score on file"},
+        {"name": "fraud_label", "type": "binary", "description": "Ground truth label (1 = confirmed fraud / scam, 0 = legitimate)"}
+    ]
+
+    return {
+        "dataset_name": "Synthetic Financial Risk Benchmark Dataset (Research Labeled)",
+        "label": "SYNTHETIC BENCHMARK DATASET (Explicitly labeled for reproducible research)",
+        "total_transactions": total_tx,
+        "fraud_cases": fraud_cases,
+        "fraud_prevalence_pct": fraud_pct,
+        "features_count": len(fields),
+        "features": fields,
+        "samples": sample_rows
+    }
+
+
+@app.get("/api/research/baselines")
+def get_ml_baselines():
+    """Evaluates and compares 5 ML baselines on identical held-out test split."""
+    evaluator = get_baseline_evaluator()
+    return evaluator.run_all_baselines()
+
+
+@app.get("/api/research/controlled-experiments")
+def get_controlled_experiments():
+    """Returns controlled Experiment A: One-stage vs Two-stage architectures."""
+    evaluator = get_baseline_evaluator()
+    res = evaluator.run_all_baselines()
+    return {
+        "experiment_name": "Experiment A: Single-Stage vs Two-Stage Verification Tradeoff",
+        "hypothesis": "Two-stage adaptive routing reduces verification friction while preserving or improving detection recall.",
+        "comparisons": res["controlled_experiment_a"],
+        "key_finding": res["key_finding"]
+    }
+
+
+@app.get("/api/research/optimize-thresholds")
+def optimize_stage1_thresholds(
+    cost_fp: float = Query(10.0, description="Cost of false positive (blocking legitimate customer)"),
+    cost_fn: float = Query(180.0, description="Cost of false negative (letting fraud through)"),
+    cost_friction: float = Query(1.5, description="Cost of customer verification friction")
+):
+    """Computes empirical cost-optimal (theta_low, theta_high) on validation set."""
+    optimizer = get_optimizer()
+    return optimizer.optimize(cost_fp=cost_fp, cost_fn=cost_fn, cost_friction=cost_friction)
+
+
+@app.get("/api/research/ablation")
+def get_ablation_study():
+    """Runs systematic ablation study removing one component at a time."""
+    runner = get_ablation_runner()
+    return runner.run_full_ablation_study()
+
+
+@app.get("/api/research/rag-eval")
+def get_rag_eval():
+    """Computes measurable RAG benchmark metrics (Recall@K, Precision@K, grounding score)."""
+    evaluator = get_rag_evaluator()
+    return evaluator.evaluate(k_max=3)
+
+
+@app.get("/api/research/cpp-benchmark")
+def get_cpp_benchmark():
+    """Executes C++ thread pool vs Python sequential vs Python concurrent performance benchmark."""
+    bench = get_performance_benchmark()
+    return bench.run_all()
+
+
+@app.get("/api/research/failure-analysis")
+def get_failure_analysis():
+    """Returns 5 categorized failure case studies with root cause and mitigations."""
+    return {
+        "summary": FailureAnalysisService.get_summary_metrics(),
+        "cases": FailureAnalysisService.list_all_cases()
+    }
 

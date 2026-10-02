@@ -8,3 +8,4 @@ xgboost
 joblib
 kafka-python==2.0.2
 anthropic
+shap
