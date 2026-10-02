@@ -42,4 +42,7 @@ frontend/dist/
 .idea/
 .DS_Store
 Thumbs.db
-*.log
+# Database files
+*.db
+*.sqlite3
+backend/*.db

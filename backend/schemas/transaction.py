@@ -12,6 +12,8 @@ class Decision(str, Enum):
 
 class RecipientProfile(BaseModel):
     recipient_id: str
+    internal_user_id: Optional[int] = None
+    bank_account_id: Optional[int] = None
     full_name: str
     phone: str
     masked_phone: str
@@ -24,15 +26,21 @@ class RecipientProfile(BaseModel):
     is_new_recipient: bool = False
     prior_transfers: int = 0
     fraud_reports: int = 0
+    account_status: Optional[str] = "ACTIVE"
 
 
 class RecipientLookupIn(BaseModel):
-    query: str
+    query: Optional[str] = None
+    phone: Optional[str] = None
+    email: Optional[str] = None
+    sender_user_id: Optional[str] = "harshit"
 
 
 class TransactionIn(BaseModel):
     user_id: str = "U-8821"
     customer_name: Optional[str] = "Harshit P."
+    recipient_id: Optional[str] = None
+    recipient_user_id: Optional[int] = None
     recipient_name: str
     recipient_phone: Optional[str] = None
     recipient_email: Optional[str] = None

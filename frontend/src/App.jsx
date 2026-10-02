@@ -144,6 +144,7 @@ export default function App() {
   const [searchMode, setSearchMode] = useState("phone"); // "phone" | "email"
   const [foundRecipient, setFoundRecipient] = useState(null);
   const [searching, setSearching] = useState(false);
+  const [bankUsers, setBankUsers] = useState([]);
 
   // Transfer Transaction Details
   const [tx, setTx] = useState({
@@ -185,13 +186,20 @@ export default function App() {
   const [managerNotes, setManagerNotes] = useState("");
   const [actionBusy, setActionBusy] = useState(false);
 
-  // Periodic health & Manager queue check
+  // Periodic health, Manager queue check, and Bank Users sync
   useEffect(() => {
     const check = () => {
       fetch(`${API}/health`)
         .then((r) => r.json())
         .then((d) => setApiOnline(d.status === "ok"))
         .catch(() => setApiOnline(false));
+
+      fetch(`${API}/api/bank/users`)
+        .then((r) => r.json())
+        .then((users) => {
+          if (Array.isArray(users)) setBankUsers(users);
+        })
+        .catch(() => {});
 
       fetch(`${API}/api/manager/queue`)
         .then((r) => r.json())
@@ -249,15 +257,19 @@ export default function App() {
     return r.json();
   };
 
-  // Perform Recipient Directory Lookup
+  // Perform Recipient Database Lookup (queries registered users in Bank DB)
   const handleLookup = async (queryToSearch = searchQuery) => {
     setSearching(true);
     setErr("");
     try {
-      const q = encodeURIComponent(queryToSearch);
-      const r = await fetch(`${API}/api/recipients/lookup?q=${q}`);
-      if (!r.ok) throw new Error("Directory lookup failed");
-      const data = await r.json();
+      const q = (queryToSearch || "").trim();
+      const body = {
+        query: q,
+        phone: searchMode === "phone" ? q : undefined,
+        email: searchMode === "email" ? q : undefined,
+        sender_user_id: currentUser?.user_id || "harshit"
+      };
+      const data = await post("/api/recipients/lookup", body);
       setFoundRecipient(data);
       setVf((prev) => ({
         ...prev,
@@ -278,16 +290,19 @@ export default function App() {
     }
   };
 
-  // Stage 1 Send
+  // Stage 1 Send with internal IDs
   const handleStage1Assess = async () => {
     setBusy(true);
     setErr("");
     try {
       const body = {
-        user_id: "U-8821",
-        customer_name: tx.customer_name,
+        user_id: currentUser?.user_id || "harshit",
+        customer_name: currentUser?.full_name || tx.customer_name,
+        recipient_id: foundRecipient ? foundRecipient.recipient_id : "REC-0002",
+        recipient_user_id: foundRecipient ? foundRecipient.internal_user_id : 2,
         recipient_name: foundRecipient ? foundRecipient.full_name : "John Michael Smith",
         recipient_phone: foundRecipient ? foundRecipient.phone : "+1 214 555 0192",
+        recipient_email: foundRecipient ? foundRecipient.email : "john.smith@gmail.com",
         amount: Number(tx.amount),
         avg_amount_90d: Number(tx.avg_amount_90d),
         recipient_age_days: Number(tx.recipient_age_days),
@@ -300,6 +315,12 @@ export default function App() {
       setRes(result);
 
       if (result.decision === "APPROVE") {
+        if (currentUser) {
+          setCurrentUser((prev) => ({
+            ...prev,
+            balance: Math.max(0, (prev.balance || 14250) - Number(tx.amount))
+          }));
+        }
         setCustStep(6);
       } else if (result.decision === "BLOCK" || result.transaction_status === "STOPPED") {
         setCustStep(6);
@@ -775,44 +796,76 @@ export default function App() {
                     </div>
                   </div>
 
-                  {/* Quick Enrolled Contacts Suggestions */}
+                  {/* Live Bank Database Contacts */}
                   <div style={{ marginBottom: 20 }}>
-                    <div style={{ fontSize: 11, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase", marginBottom: 8 }}>
-                      Enrolled Directory Contacts:
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                      <span style={{ fontSize: 11, fontWeight: 700, color: "var(--text-faint)", textTransform: "uppercase" }}>
+                        Registered Bank Database Customers:
+                      </span>
+                      <span style={{ fontSize: 10, color: "#34d399", background: "rgba(16, 185, 129, 0.12)", padding: "2px 8px", borderRadius: 10, border: "1px solid rgba(16, 185, 129, 0.25)" }}>
+                        ● Live SQLite DB
+                      </span>
                     </div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {[
-                        { name: "John Michael Smith", phone: "+1 (214) 555-1641", loc: "Dallas, TX", tag: "⚠️ New Recipient" },
-                        { name: "Sarah Elizabeth Miller", phone: "+1 (415) 555-2481", loc: "San Francisco, CA", tag: "✓ Known Contact" },
-                        { name: "David Alexander Vance", phone: "+1 (312) 555-8839", loc: "Chicago, IL", tag: "⚠️ High Velocity" }
-                      ].map((c, i) => (
-                        <div
-                          key={i}
-                          onClick={() => {
-                            setSearchQuery(c.phone);
-                            handleLookup(c.phone);
-                          }}
-                          style={{
-                            background: "rgba(255, 255, 255, 0.03)",
-                            border: "1px solid var(--border-subtle)",
-                            borderRadius: 8,
-                            padding: "10px 12px",
-                            display: "flex",
-                            justifyContent: "space-between",
-                            alignItems: "center",
-                            cursor: "pointer",
-                            transition: "background 0.15s"
-                          }}
-                        >
-                          <div>
-                            <div style={{ fontSize: 13, fontWeight: 700, color: "#fff" }}>{c.name}</div>
-                            <div style={{ fontSize: 11, color: "var(--text-muted)" }}>{c.phone} • {c.loc}</div>
+
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, maxHeight: 220, overflowY: "auto" }}>
+                      {(bankUsers.length > 0
+                        ? bankUsers.filter((u) => u.user_id !== (currentUser?.user_id || "harshit"))
+                        : [
+                            { full_name: "John Michael Smith", phone_number: "+1 (214) 555-0192", email: "john.smith@gmail.com", location: "Dallas, Texas", user_id: "johnsmith92" },
+                            { full_name: "Sarah Elizabeth Miller", phone_number: "+1 (415) 555-2481", email: "sarah.m@gmail.com", location: "San Francisco, California", user_id: "sarahmiller" },
+                            { full_name: "David Alexander Vance", phone_number: "+1 (312) 555-8839", email: "david.vance@yahoo.com", location: "Chicago, Illinois", user_id: "davidvance" }
+                          ]
+                      ).map((c, i) => {
+                        const targetVal = searchMode === "phone" ? (c.phone_number || c.phone) : (c.email || c.phone_number);
+                        const isKnown = c.user_id === "sarahmiller";
+                        return (
+                          <div
+                            key={c.id || i}
+                            onClick={() => {
+                              setSearchQuery(targetVal);
+                              handleLookup(targetVal);
+                            }}
+                            style={{
+                              background: "rgba(255, 255, 255, 0.03)",
+                              border: "1px solid var(--border-subtle)",
+                              borderRadius: 8,
+                              padding: "10px 12px",
+                              display: "flex",
+                              justifyContent: "space-between",
+                              alignItems: "center",
+                              cursor: "pointer",
+                              transition: "all 0.15s ease"
+                            }}
+                            onMouseEnter={(e) => (e.currentTarget.style.background = "rgba(56, 189, 248, 0.1)")}
+                            onMouseLeave={(e) => (e.currentTarget.style.background = "rgba(255, 255, 255, 0.03)")}
+                          >
+                            <div>
+                              <div style={{ fontSize: 13, fontWeight: 700, color: "#fff", display: "flex", alignItems: "center", gap: 6 }}>
+                                <span>👤</span> {c.full_name}
+                                {c.account_number_masked && (
+                                  <span style={{ fontSize: 10, color: "var(--text-faint)", fontWeight: 400 }}>
+                                    ({c.account_number_masked.split(" ").pop()})
+                                  </span>
+                                )}
+                              </div>
+                              <div style={{ fontSize: 11, color: "var(--text-muted)", marginTop: 2 }}>
+                                {targetVal} • {c.location || "United States"}
+                              </div>
+                            </div>
+                            <span style={{
+                              fontSize: 10,
+                              fontWeight: 700,
+                              background: isKnown ? "rgba(16, 185, 129, 0.15)" : "rgba(245, 158, 11, 0.15)",
+                              color: isKnown ? "#34d399" : "#fbbf24",
+                              border: `1px solid ${isKnown ? "rgba(16, 185, 129, 0.3)" : "rgba(245, 158, 11, 0.3)"}`,
+                              padding: "2px 8px",
+                              borderRadius: 10
+                            }}>
+                              {isKnown ? "✓ Known Contact" : "⚠️ New Recipient"}
+                            </span>
                           </div>
-                          <span style={{ fontSize: 10, background: "rgba(255, 255, 255, 0.08)", padding: "2px 8px", borderRadius: 10, color: "var(--text-muted)" }}>
-                            {c.tag}
-                          </span>
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </div>
 
@@ -834,7 +887,7 @@ export default function App() {
                       letterSpacing: "0.5px"
                     }}
                   >
-                    {searching ? "Searching Directory…" : "FIND RECIPIENT →"}
+                    {searching ? "Searching Bank Database…" : "SEARCH BANK DB →"}
                   </button>
                 </div>
               )}

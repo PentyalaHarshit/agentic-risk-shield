@@ -150,6 +150,93 @@ The system features an institutional Bank of America-inspired authentication gat
 
 ---
 
+## Bank Database & Recipient Architecture
+
+The backend implements a relational database engine (`backend/bank_db.py`) storing customer profiles, checking accounts, relationship contacts, and transactional ledgers:
+
+```
+REGISTER
+     │
+User A ────────────────┐
+                       │
+User B ────────────────┤ Bank Database (SQLite3 / PostgreSQL)
+                       │  - users
+User C ────────────────┘  - bank_accounts
+     ▲                    - saved_recipients
+     │                    - transactions
+LOGIN
+     │
+SEND MONEY
+     │
+Phone / Email Query
+     │
+Find User B (Bank DB Query)
+     │
+Verify Recipient (Masked Card)
+     │
+Risk Shield (Stages 1 & 2)
+     │
+Transfer Funds (Internal IDs & Real-Time Balance Settlement)
+```
+
+### Relational Schema
+
+1. **`users`**:
+   - `id` (INTEGER PRIMARY KEY)
+   - `full_name`, `user_id`, `password_hash`, `salt`
+   - `email`, `phone_number`, `phone_digits`, `location`
+   - `email_verified`, `phone_verified`, `face_credential_id`
+   - `account_status`, `created_at`
+2. **`bank_accounts`**:
+   - `id` (INTEGER PRIMARY KEY)
+   - `user_id` (REFERENCES users(id))
+   - `account_number_masked` (e.g. `Advantage Checking (...8492)`)
+   - `account_type` (`CHECKING`)
+   - `available_balance` (Real-time balance tracking)
+   - `account_status` (`ACTIVE`)
+3. **`saved_recipients`**:
+   - `owner_user_id`, `recipient_user_id`
+   - `nickname`, `prior_transfers`, `last_transfer_at`
+   - Distinguishes **Known Contacts** (e.g., Sarah Miller, 14 prior transfers) from **New Recipients** (0 prior transfers).
+4. **`transactions`**:
+   - `id` (`TX-XXXXXX`)
+   - `sender_user_id`, `recipient_user_id`
+   - `sender_account_id`, `recipient_account_id`
+   - `amount`, `stage_1_risk_score`, `stage_1_decision`, `status`
+   - Automatic double-entry balance settlement upon approval.
+
+### Recipient Lookup Flow
+
+When the customer enters a phone number or email:
+1. React sends `POST /api/recipients/lookup` with `{ "phone": "+12145550192" }` or `{ "email": "..." }`.
+2. FastAPI queries the database:
+   ```sql
+   SELECT id, full_name, phone_number, email, location, account_status
+   FROM users
+   WHERE phone_digits LIKE :phone_digits OR email = :email;
+   ```
+3. The frontend displays the Bank of America-style verification card:
+   ```
+   ┌──────────────────────────────────────┐
+   │          Verify Recipient            │
+   │                                      │
+   │  👤 John Michael Smith               │
+   │                                      │
+   │  📱 +1 (214) ***-0192                │
+   │  📧 j***@example.test                │
+   │  📍 Dallas, Texas                    │
+   │                                      │
+   │  ✓ Phone matches registered recipient│
+   │  ✓ Recipient account verified        │
+   │  ⚠ New recipient                     │
+   │                                      │
+   │  [ ✓ THIS IS THE CORRECT PERSON ]    │
+   └──────────────────────────────────────┘
+   ```
+4. Transfer requests reference internal IDs (`sender_user_id`, `recipient_user_id`, `sender_account_id`, `recipient_account_id`) ensuring relational integrity.
+
+---
+
 ## Three Possible Endings
 
 ### 1. Very Low Risk (Auto-Approved)

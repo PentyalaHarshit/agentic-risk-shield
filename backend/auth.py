@@ -80,24 +80,7 @@ def mask_phone(phone: str) -> str:
     return phone
 
 
-# In-memory store for demo users, active OTPs, and sessions
-USERS_DB: Dict[str, Dict] = {
-    # Default pre-enrolled user for instant demo
-    "harshit": {
-        "user_id": "harshit",
-        "full_name": "Harshit Pentyala",
-        "email": "harshit.pentyala@gmail.com",
-        "phone": "+1 (214) 555-0192",
-        "salt": "demo_salt_123",
-        "password_hash": hash_password("RiskShield@2026", "demo_salt_123"),
-        "account_number": "Advantage Checking (...8492)",
-        "balance": 14250.00,
-        "otp_verified": True,
-        "face_enrolled": True,
-        "face_hash": "sample_enrolled_face_embedding_hash",
-        "created_at": time.time()
-    }
-}
+from bank_db import BankDatabase, clean_phone_digits, mask_phone_str, mask_email_str
 
 ACTIVE_OTPS: Dict[str, Dict] = {}
 SESSIONS: Dict[str, str] = {}  # token -> user_id
@@ -107,11 +90,23 @@ class AuthService:
     @staticmethod
     def register(data: RegisterIn) -> Dict:
         uid = data.user_id.strip().lower()
-        if uid in USERS_DB and USERS_DB[uid].get("otp_verified"):
+        existing = BankDatabase.get_user_by_id(uid)
+        if existing and existing.get("phone_verified"):
             raise ValueError(f"User ID '{data.user_id}' already registered. Please sign in.")
 
         salt = os.urandom(8).hex()
         pw_hash = hash_password(data.password, salt)
+
+        # Store in relational Bank Database
+        db_user = BankDatabase.register_user(
+            full_name=data.full_name,
+            user_id=uid,
+            password_hash=pw_hash,
+            salt=salt,
+            email=data.email,
+            phone=data.phone,
+            location="Dallas, Texas"
+        )
 
         # Generate 6-digit OTP
         otp_code = f"{random.randint(100000, 999999)}"
@@ -121,28 +116,12 @@ class AuthService:
             "attempts": 0
         }
 
-        user_entry = {
-            "user_id": uid,
-            "full_name": data.full_name.strip(),
-            "email": data.email.strip().lower(),
-            "phone": data.phone.strip(),
-            "salt": salt,
-            "password_hash": pw_hash,
-            "account_number": "Advantage Checking (...8492)",
-            "balance": 14250.00,
-            "otp_verified": False,
-            "face_enrolled": False,
-            "face_hash": None,
-            "created_at": time.time()
-        }
-        USERS_DB[uid] = user_entry
-
         return {
             "user_id": uid,
-            "masked_email": mask_email(user_entry["email"]),
-            "masked_phone": mask_phone(user_entry["phone"]),
+            "masked_email": db_user["masked_email"],
+            "masked_phone": db_user["masked_phone"],
             "demo_otp_preview": otp_code,  # Provided for convenience in testing environment
-            "message": f"Verification code sent to {mask_email(user_entry['email'])} and {mask_phone(user_entry['phone'])}"
+            "message": f"Verification code sent to {db_user['masked_email']} and {db_user['masked_phone']}"
         }
 
     @staticmethod
@@ -169,7 +148,7 @@ class AuthService:
 
         # OTP Success
         del ACTIVE_OTPS[uid]
-        USERS_DB[uid]["otp_verified"] = True
+        BankDatabase.verify_otp(uid)
 
         return {
             "status": "verified",
@@ -180,10 +159,10 @@ class AuthService:
     @staticmethod
     def resend_otp(user_id: str) -> Dict:
         uid = user_id.strip().lower()
-        if uid not in USERS_DB:
+        user = BankDatabase.get_user_by_id(uid)
+        if not user:
             raise ValueError("User not found.")
 
-        user = USERS_DB[uid]
         otp_code = f"{random.randint(100000, 999999)}"
         ACTIVE_OTPS[uid] = {
             "code": otp_code,
@@ -193,8 +172,8 @@ class AuthService:
 
         return {
             "user_id": uid,
-            "masked_email": mask_email(user["email"]),
-            "masked_phone": mask_phone(user["phone"]),
+            "masked_email": mask_email_str(user["email"]),
+            "masked_phone": mask_phone_str(user["phone_number"]),
             "demo_otp_preview": otp_code,
             "message": "New verification code generated and sent."
         }
@@ -202,12 +181,13 @@ class AuthService:
     @staticmethod
     def enroll_face(data: EnrollFaceIn) -> Dict:
         uid = data.user_id.strip().lower()
-        if uid not in USERS_DB:
+        user = BankDatabase.get_user_by_id(uid)
+        if not user:
             raise ValueError("User not found.")
 
         # In a production banking app, cryptographic hardware WebAuthn / secure enclave is used.
         # In this AI demo, we verify 4 directional milestones (center, left, right, up_down)
-        # and store a deterministic biometric signature hash.
+        # and store a deterministic biometric signature hash in the bank DB.
         req_dirs = {"center", "left", "right", "up_down"}
         completed = set(data.directions_completed)
         if not req_dirs.issubset(completed):
@@ -215,8 +195,7 @@ class AuthService:
             raise ValueError(f"Face enrollment incomplete. Missing directional poses: {missing}")
 
         face_hash = hashlib.sha256(f"{uid}_{time.time()}_{data.face_sample or 'face'}".encode("utf-8")).hexdigest()
-        USERS_DB[uid]["face_enrolled"] = True
-        USERS_DB[uid]["face_hash"] = face_hash
+        BankDatabase.enroll_face(uid, face_hash)
 
         return {
             "status": "enrolled",
@@ -228,10 +207,10 @@ class AuthService:
     @staticmethod
     def login_password(user_id: str, password: str) -> AuthSessionOut:
         uid = user_id.strip().lower()
-        if uid not in USERS_DB:
+        user = BankDatabase.get_user_by_id(uid)
+        if not user:
             raise ValueError("Invalid User ID or password.")
 
-        user = USERS_DB[uid]
         expected_hash = hash_password(password, user["salt"])
         if user["password_hash"] != expected_hash:
             raise ValueError("Invalid User ID or password.")
@@ -243,14 +222,14 @@ class AuthService:
             user_id=user["user_id"],
             full_name=user["full_name"],
             email=user["email"],
-            masked_email=mask_email(user["email"]),
-            phone=user["phone"],
-            masked_phone=mask_phone(user["phone"]),
-            account_number=user["account_number"],
-            balance=user["balance"],
-            otp_verified=user["otp_verified"],
-            face_enrolled=user["face_enrolled"],
-            created_at=user["created_at"]
+            masked_email=mask_email_str(user["email"]),
+            phone=user["phone_number"],
+            masked_phone=mask_phone_str(user["phone_number"]),
+            account_number=user.get("account_number_masked") or "Advantage Checking (...8492)",
+            balance=float(user.get("available_balance") or 14250.00),
+            otp_verified=bool(user.get("phone_verified")),
+            face_enrolled=bool(user.get("face_credential_id")),
+            created_at=float(user.get("created_at") or time.time())
         )
 
         return AuthSessionOut(
@@ -261,19 +240,16 @@ class AuthService:
 
     @staticmethod
     def login_face(user_id: Optional[str] = None, face_sample: Optional[str] = None) -> AuthSessionOut:
-        # If user_id is provided, verify against that user's biometric
-        # Otherwise, match against the enrolled demo user
         uid = user_id.strip().lower() if user_id else "harshit"
-        if uid not in USERS_DB:
-            # Fallback to the latest enrolled user
-            enrolled = [u for u in USERS_DB.values() if u.get("face_enrolled")]
-            if enrolled:
-                uid = enrolled[-1]["user_id"]
-            else:
+        user = BankDatabase.get_user_by_id(uid)
+        if not user:
+            # Fallback to demo user
+            user = BankDatabase.get_user_by_id("harshit")
+            if not user:
                 raise ValueError("No enrolled face ID profile found. Please register first.")
+            uid = user["user_id"]
 
-        user = USERS_DB[uid]
-        if not user.get("face_enrolled"):
+        if not user.get("face_credential_id"):
             raise ValueError(f"Face ID is not enrolled for user '{uid}'. Please enroll or sign in with password.")
 
         token = os.urandom(24).hex()
@@ -283,14 +259,14 @@ class AuthService:
             user_id=user["user_id"],
             full_name=user["full_name"],
             email=user["email"],
-            masked_email=mask_email(user["email"]),
-            phone=user["phone"],
-            masked_phone=mask_phone(user["phone"]),
-            account_number=user["account_number"],
-            balance=user["balance"],
-            otp_verified=user["otp_verified"],
-            face_enrolled=user["face_enrolled"],
-            created_at=user["created_at"]
+            masked_email=mask_email_str(user["email"]),
+            phone=user["phone_number"],
+            masked_phone=mask_phone_str(user["phone_number"]),
+            account_number=user.get("account_number_masked") or "Advantage Checking (...8492)",
+            balance=float(user.get("available_balance") or 14250.00),
+            otp_verified=bool(user.get("phone_verified")),
+            face_enrolled=bool(user.get("face_credential_id")),
+            created_at=float(user.get("created_at") or time.time())
         )
 
         return AuthSessionOut(
@@ -302,19 +278,21 @@ class AuthService:
     @staticmethod
     def get_user_from_token(token: str) -> Optional[UserProfile]:
         uid = SESSIONS.get(token)
-        if not uid or uid not in USERS_DB:
+        if not uid:
             return None
-        user = USERS_DB[uid]
+        user = BankDatabase.get_user_by_id(uid)
+        if not user:
+            return None
         return UserProfile(
             user_id=user["user_id"],
             full_name=user["full_name"],
             email=user["email"],
-            masked_email=mask_email(user["email"]),
-            phone=user["phone"],
-            masked_phone=mask_phone(user["phone"]),
-            account_number=user["account_number"],
-            balance=user["balance"],
-            otp_verified=user["otp_verified"],
-            face_enrolled=user["face_enrolled"],
-            created_at=user["created_at"]
+            masked_email=mask_email_str(user["email"]),
+            phone=user["phone_number"],
+            masked_phone=mask_phone_str(user["phone_number"]),
+            account_number=user.get("account_number_masked") or "Advantage Checking (...8492)",
+            balance=float(user.get("available_balance") or 14250.00),
+            otp_verified=bool(user.get("phone_verified")),
+            face_enrolled=bool(user.get("face_credential_id")),
+            created_at=float(user.get("created_at") or time.time())
         )

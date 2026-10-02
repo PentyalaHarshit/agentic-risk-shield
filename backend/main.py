@@ -52,16 +52,30 @@ def health():
     return {"status": "ok"}
 
 
-# ---------- Simulated Recipient Directory (Zelle / BofA / Wells Fargo style) ----------
+from bank_db import BankDatabase
+
+# ---------- Bank Database Recipient Directory (Bank of America / Wells Fargo style) ----------
 @app.get("/api/recipients/lookup", response_model=RecipientProfile)
-def get_recipient_lookup(q: str = Query(..., description="Phone number, email, or name to verify")):
-    """Lookup registered recipient in simulated banking directory and return masked profile."""
-    return lookup_recipient(q)
+def get_recipient_lookup(
+    q: str = Query(..., description="Phone number, email, or name to verify"),
+    sender_user_id: Optional[str] = Query("harshit", description="Logged-in customer user ID")
+):
+    """Lookup registered recipient in Bank Database and return masked profile."""
+    rec = BankDatabase.lookup_recipient(q, owner_user_id=sender_user_id)
+    return RecipientProfile(**rec)
 
 
 @app.post("/api/recipients/lookup", response_model=RecipientProfile)
 def post_recipient_lookup(req: RecipientLookupIn):
-    return lookup_recipient(req.query)
+    query_str = req.phone or req.email or req.query or ""
+    rec = BankDatabase.lookup_recipient(query_str, owner_user_id=req.sender_user_id)
+    return RecipientProfile(**rec)
+
+
+@app.get("/api/bank/users")
+def get_bank_users():
+    """Returns all registered bank accounts and profiles in the bank database."""
+    return BankDatabase.list_all_users()
 
 
 @app.get("/api/recipients/sample", response_model=List[RecipientProfile])
@@ -73,7 +87,32 @@ def get_sample_recipients():
 @app.post("/api/transactions/assess", response_model=AssessmentOut)
 def assess(t: TransactionIn):
     """Stage 1: fast risk score. Very low -> APPROVE | Elevated -> REQUIRE_VERIFICATION | Critical -> STOP."""
-    return orch.assess(t)
+    result = orch.assess(t)
+
+    # Record in database ledger
+    lookup_term = t.recipient_phone or t.recipient_email or t.recipient_name or ""
+    rec_info = BankDatabase.lookup_recipient(lookup_term, owner_user_id=t.user_id)
+    rec_id = t.recipient_user_id or rec_info.get("internal_user_id") or 2
+
+    tid = result.get("transaction_id", "")
+    decision = result.get("decision", "")
+    score = result.get("risk_score", 0.0)
+    status = result.get("status", "PENDING")
+
+    BankDatabase.record_transaction(
+        tid=tid,
+        sender_uid=t.user_id,
+        recipient_id=rec_id,
+        amount=t.amount,
+        s1_score=score,
+        s1_decision=decision,
+        status=status
+    )
+
+    if decision == "APPROVE":
+        BankDatabase.settle_transaction(tid, "COMPLETED", "APPROVE")
+
+    return result
 
 
 @app.get("/api/transactions/{tid}", response_model=AssessmentOut)
@@ -118,12 +157,17 @@ def get_manager_investigation_queue():
 def investigate_transaction(tid: str, dec: ManagerDecisionIn):
     """Human-in-the-loop: Bank Manager approves, denies, or requests info on a held transaction."""
     try:
-        return orch.process_manager_decision(
+        res = orch.process_manager_decision(
             tid=tid,
             action=dec.action.upper(),
             manager_name=dec.manager_name or "Operations Manager",
             notes=dec.notes
         )
+        if dec.action.upper() == "APPROVE":
+            BankDatabase.settle_transaction(tid, "COMPLETED", "APPROVE")
+        elif dec.action.upper() == "DENY":
+            BankDatabase.settle_transaction(tid, "BLOCKED", "DENY")
+        return res
     except KeyError:
         raise HTTPException(404, f"Transaction {tid} not found in review queue")
 
