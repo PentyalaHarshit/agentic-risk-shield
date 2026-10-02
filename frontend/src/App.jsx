@@ -529,7 +529,7 @@ export default function App() {
                 )}
                 <div>
                   <div style={{ fontSize: 11, color: "var(--accent-blue)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                    QuickPay with Zelle® & Risk Shield
+                    QuickPay + Risk Shield
                   </div>
                   <div style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>
                     {custStep === 1 && "Send Money"}
@@ -1154,7 +1154,7 @@ export default function App() {
                         TRANSFER STOPPED
                       </h3>
                       <p style={{ color: "var(--text-muted)", fontSize: 13, lineHeight: 1.5, marginBottom: 16 }}>
-                        We couldn't complete this transfer because our security system detected critical risk indicators.
+                        Your transfer was not completed because critical security risk indicators were detected.
                       </p>
 
                       <div style={{ background: "rgba(0,0,0,0.4)", borderRadius: 8, padding: 12, textAlign: "left", fontSize: 12, marginBottom: 16 }}>

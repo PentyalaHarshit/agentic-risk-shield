@@ -1,48 +1,131 @@
-# Real-Time Agentic Financial Risk Platform
+# Risk Shield Banking Network
 
-Two-stage transaction protection: fast ML scoring -> (only if risky) user verification form ->
-agentic analysis (ReAct-style tool calls) + XGBoost + RAG -> APPROVE / HOLD / BLOCK with an explanation.
+A real-time two-stage financial transaction security platform combining behavioral ML, agentic AI, communication forensics, RAG-based policy reasoning, explainable risk analysis, and human-in-the-loop transaction review.
+
+Inspired by modern banking verification flows (such as Bank of America / Wells Fargo / Zelle recipient lookups and fraud review policies), without using proprietary code or trademarks.
 
 ```
-Event -> Kafka -> C++ engine (thread pool) -> Orchestrator
-   Transaction Agent / Fraud Agent (XGBoost) / Risk Agent
-   score < 0.15  -> APPROVE (no friction)
-   0.15 - 0.85   -> "I WANT TO PAY" -> mandatory form -> 
-                    Communication Agent (WhatsApp/iMessage/Telegram/Signal) +
-                    Relationship Agent + XGBoost(stage 2) + RAG
-   >= 0.85       -> HOLD
-   Stage 2: <0.40 APPROVE | >=0.75 and hard evidence BLOCK | otherwise HOLD (+ XAI explanation)
+                 React Customer App (Android / Mobile View)
+                                     │
+                                     ▼
+                Search Recipient by Phone Number or Email
+                                     │
+                                     ▼
+                 FastAPI Gateway: /api/recipients/lookup
+                                     │
+                                     ▼
+                         Simulated Banking Directory
+                     (Masked Phone, Email, City, Status)
+                                     │
+                                     ▼
+                       [✓ THIS IS THE CORRECT PERSON]
+                                     │
+                                     ▼
+                              Stage 1 ML Model
+                     ┌───────────────┼───────────────┐
+                     ▼               ▼               ▼
+                  VERY LOW         HIGH           CRITICAL
+                     │               │               │
+                     ▼               ▼               ▼
+                  APPROVE         Stage 2      🚫 STOPPED
+                (Transferred)   Verification  ("Funds not transferred")
+                                     │
+                                     ▼
+                               I WANT TO PAY
+                                     │
+                                     ▼
+                           Communication Forensics
+                        (WhatsApp, iMessage, etc.)
+                                     │
+                                     ▼
+                            Multi-Agent Pipeline
+                         (Transaction, Comm, Rel,
+                            Risk, RAG, Decision)
+                                     │
+                     ┌───────────────┴───────────────┐
+                     ▼                               ▼
+                 LOW RISK                        HIGH RISK
+                     │                               │
+                     ▼                               ▼
+                  APPROVE                      🟡 ON HOLD
+                (Transferred)             ("Awaiting Bank Review")
+                                                     │
+                                                     ▼
+                                            BANK REVIEW QUEUE
+                                                     │
+                                                     ▼
+                                         👨‍💼 Bank Manager Portal
+                                           (Multi-Factor Audit)
+                                                     │
+                                          ┌──────────┴──────────┐
+                                          ▼                     ▼
+                                     [✓ APPROVE]           [🚫 DENY]
+                                          │                     │
+                                          ▼                     ▼
+                                    TRANSFER SENT        TRANSFER STOPPED
 ```
 
-## Run locally (no Docker)
+---
+
+## Three Possible Endings
+
+### 1. Very Low Risk (Auto-Approved)
+```text
+Stage 1 -> VERY LOW -> ✅ AUTO-APPROVED
+```
+- Transferred instantly with zero user friction.
+- Status: `✓ COMPLETED`, funds transferred immediately.
+
+### 2. Critical Risk (Transfer Stopped)
+```text
+Stage 1 / Stage 2 -> CRITICAL -> 🚫 TRANSFER STOPPED
+```
+- The transaction is immediately stopped to prevent unauthorized fund loss.
+- Customer message: *"Your transfer was not completed because critical security risk indicators were detected."*
+- `funds_transferred: false`, `status: "BLOCKED"`, `reason_code: "CRITICAL_RISK"`.
+- Adheres to **POLICY-007**: states a risk assessment and never accuses anyone of being a scammer.
+
+### 3. Hold (Human-in-the-Loop Bank Operations Review)
+```text
+Risk Assessment -> HOLD -> 👨‍💼 Bank Operations -> Senior Risk Investigator -> [ APPROVE / DENY ]
+```
+- Ambiguous or high-risk transfers are placed on **HOLD** (`status: "ON_HOLD"`).
+- Automatically routed to the **Bank Review Queue** in the Bank Operations Console.
+- Senior Risk Investigator inspects the multi-agent audit trail, communication forensics, and policy grounds, then executes the final operational decision (`APPROVE` or `DENY`).
+- The customer's mobile banking screen updates live via reactive polling as soon as the manager decides.
+
+---
+
+## Run Locally
+
 ```bash
+# 1. C++ Velocity Engine (optional for native multithreading)
 cd cpp_engine && make && cd ..
-cd backend && pip install -r requirements.txt
+
+# 2. Backend FastAPI
+cd backend
+pip install -r requirements.txt
 python ml/risk_model.py                  # trains stage1/stage2 models on synthetic data
-uvicorn main:app --reload                # API on :8000 (docs at /docs)
-python stream_consumer.py --demo         # C++ engine + orchestrator on fake events (no Kafka)
-cd ../frontend && npm install && npm run dev   # UI on :5173
+uvicorn main:app --reload --port 8000    # API on :8000 (docs at /docs)
+
+# 3. Stream Consumer (demo simulation)
+python stream_consumer.py --demo         # C++ engine + orchestrator on fake events
+
+# 4. Frontend (Dual Customer Mobile App + Bank Operations Portal)
+cd ../frontend
+npm install
+npm run dev                              # UI on :5173
 ```
-Docker: `docker compose up --build`.
-Set `ANTHROPIC_API_KEY` to have an LLM polish the explanation text (optional; a template is used otherwise).
 
-## Design decisions (important)
-- Missing social profile / different surname / unverified location are **weak signals** only. They raise
-  the score for review but can never cause a BLOCK alone (`RiskAgent.stage2`, POLICY-006).
-- Only data the user typed or explicitly shared (`shared_messages`, `communication_text`) is analysed. No covert access to
-  WhatsApp / Telegram / Signal / iMessage etc. (POLICY-008).
-- Explanations state a *risk assessment*, never "this person is a scammer" (POLICY-007).
-- Multi-factor risk decomposition decouples individual signals (`transaction_risk`, `communication_risk`, `relationship_risk`, `history_risk`) from the final calibrated decision.
-- The models train on **synthetic data** - replace `synth_data()` in `ml/risk_model.py` with real labelled
-  data (e.g. IEEE-CIS / PaySim) before drawing any research conclusions.
-- `phone_in_user_contacts` and `user_location` are mocked inputs; wire them to a consent-based contacts flow.
+---
 
-## Experiments (for your research)
-A: XGBoost only | B: +RAG | C: +Agent | D: +Agent+RAG+XAI | E: D + Social Communication Evidence + streaming.
-Metrics: recall, precision, F1, FPR, p50/p95 latency (`GET /api/metrics`), unnecessary interruptions, false positive rates when communication context is added.
+## API Endpoints
 
-## API
-- `POST /api/transactions/assess` - stage 1 (behavioral & velocity ML)
-- `POST /api/transactions/{id}/verify` - stage 2 (mandatory form + communication forensics + RAG)
-- `POST /api/communication/analyze` - real-time preview of social/messaging excerpts
-- `GET /api/audit`, `GET /api/metrics`
+- `GET /api/recipients/lookup?q=...` — Privacy-safe recipient directory search by phone, email, or name
+- `POST /api/transactions/assess` — Stage 1 behavioral & velocity ML evaluation
+- `POST /api/transactions/{id}/verify` — Stage 2 recipient & social communication forensic verification
+- `POST /api/communication/analyze` — Real-time interactive forensic preview of social messaging excerpts
+- `GET /api/manager/queue` — Active bank review queue of held transactions
+- `POST /api/manager/investigate/{id}` — Human-in-the-loop investigation action (APPROVE, DENY, REQUEST_INFO)
+- `GET /api/transactions/{id}` — Live status tracker for customer screen polling
+- `GET /api/audit`, `GET /api/metrics` — Audit logs and latency metrics
