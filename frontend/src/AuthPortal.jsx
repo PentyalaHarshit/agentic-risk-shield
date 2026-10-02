@@ -401,32 +401,57 @@ export default function AuthPortal({ API, currentTheme, onLoginSuccess, setErr }
 
             {/* Step 4: OTP Verification */}
             {regStep === 4 && (
-              <div style={{ padding: "30px 28px 34px", textAlign: "center", maxWidth: 500, margin: "0 auto" }} className="animate-fade-in">
-                <div style={{ width: 64, height: 64, borderRadius: "50%", background: "rgba(56,189,248,0.12)", border: "2px solid #38bdf8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 28, margin: "0 auto 14px", boxShadow: "0 0 24px rgba(56,189,248,0.3)" }}>✉️</div>
-                <h3 style={{ fontSize: 20, fontWeight: 800, color: "#fff", marginBottom: 6 }}>Verify Your Identity</h3>
-                <p style={{ fontSize: 13, color: "rgba(255,255,255,0.45)", marginBottom: 14 }}>A 6-digit verification code was sent to:</p>
-                <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 10, padding: "10px 16px", marginBottom: 20, display: "inline-block", border: "1px solid rgba(255,255,255,0.07)" }}>
-                  <div style={{ fontSize: 12, color: "#fff", marginBottom: 3 }}>📧 Email: <strong>{otpInfo.masked_email}</strong></div>
-                  <div style={{ fontSize: 12, color: "#fff" }}>📱 SMS: <strong>{otpInfo.masked_phone}</strong></div>
+              <div style={{ padding: "16px 28px 20px", textAlign: "center", maxWidth: 520, margin: "0 auto" }} className="animate-fade-in">
+                {/* Compact header row */}
+                <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 10, marginBottom: 8 }}>
+                  <div style={{ width: 44, height: 44, borderRadius: "50%", background: "rgba(56,189,248,0.12)", border: "2px solid #38bdf8", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 20, flexShrink: 0, boxShadow: "0 0 16px rgba(56,189,248,0.3)" }}>✉️</div>
+                  <div style={{ textAlign: "left" }}>
+                    <h3 style={{ fontSize: 18, fontWeight: 800, color: "#fff", margin: 0 }}>Verify Your Identity</h3>
+                    <p style={{ fontSize: 11, color: "rgba(255,255,255,0.4)", margin: 0 }}>Enter the 6-digit code sent to your contacts below</p>
+                  </div>
                 </div>
+
+                {/* Contact info — compact inline */}
+                <div style={{ background: "rgba(0,0,0,0.28)", borderRadius: 8, padding: "7px 14px", marginBottom: 14, display: "flex", justifyContent: "center", gap: 20, border: "1px solid rgba(255,255,255,0.06)" }}>
+                  <span style={{ fontSize: 11, color: "#fff" }}>📧 <strong>{otpInfo.masked_email}</strong></span>
+                  <span style={{ fontSize: 11, color: "#fff" }}>📱 <strong>{otpInfo.masked_phone}</strong></span>
+                </div>
+
+                {/* Demo code banner — PROMINENT so user can't miss it */}
+                {otpInfo.preview && (
+                  <div
+                    onClick={() => setOtpDigits(otpInfo.preview.split(""))}
+                    style={{ background: "rgba(16,185,129,0.15)", border: "1.5px solid rgba(16,185,129,0.5)", borderRadius: 9, padding: "9px 14px", marginBottom: 12, cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 10, transition: "background 0.2s" }}
+                  >
+                    <span style={{ fontSize: 15 }}>⚡</span>
+                    <div style={{ textAlign: "left" }}>
+                      <div style={{ fontSize: 11, color: "#10b981", fontWeight: 700 }}>DEMO — Click to auto-fill the code</div>
+                      <div style={{ fontSize: 16, fontWeight: 900, color: "#34d399", fontFamily: "monospace", letterSpacing: "2px" }}>{otpInfo.preview}</div>
+                    </div>
+                    <div style={{ marginLeft: "auto", background: "rgba(16,185,129,0.3)", borderRadius: 6, padding: "4px 10px", fontSize: 11, fontWeight: 700, color: "#34d399" }}>AUTO-FILL →</div>
+                  </div>
+                )}
+
                 <form onSubmit={verifyOtp}>
-                  <div style={{ display: "flex", justifyContent: "center", gap: 10, marginBottom: 14 }} onPaste={otpPaste}>
+                  {/* OTP boxes */}
+                  <div style={{ display: "flex", justifyContent: "center", gap: 8, marginBottom: 12 }} onPaste={otpPaste}>
                     {otpDigits.map((d, i) => (
                       <input key={i} ref={el => (otpRefs.current[i] = el)} type="text" inputMode="numeric" maxLength={1} value={d}
                         onChange={e => otpChange(i, e.target.value)} onKeyDown={e => otpKey(i, e)}
-                        style={{ width: 48, height: 56, textAlign: "center", fontSize: 22, fontWeight: 800, background: "rgba(0,0,0,0.5)", border: d ? "2px solid #38bdf8" : "2px solid rgba(255,255,255,0.1)", borderRadius: 10, color: "#fff", outline: "none" }} />
+                        style={{ width: 46, height: 52, textAlign: "center", fontSize: 22, fontWeight: 800, background: "rgba(0,0,0,0.5)", border: d ? "2px solid #38bdf8" : "2px solid rgba(255,255,255,0.1)", borderRadius: 10, color: "#fff", outline: "none", transition: "border 0.15s" }} />
                     ))}
                   </div>
-                  {otpInfo.preview && (
-                    <div onClick={() => setOtpDigits(otpInfo.preview.split(""))} style={{ background: "rgba(16,185,129,0.1)", border: "1px solid rgba(16,185,129,0.3)", borderRadius: 8, padding: "7px 12px", marginBottom: 16, fontSize: 12, color: "#34d399", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", gap: 8 }}>
-                      ⚡ Demo Code: <strong>{otpInfo.preview}</strong> <span style={{ fontSize: 10, textDecoration: "underline" }}>(Click to auto-fill)</span>
-                    </div>
-                  )}
-                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 18 }}>
-                    <span style={{ fontSize: 12, color: "rgba(255,255,255,0.3)" }}>Didn't receive the code?</span>
-                    <button type="button" onClick={resend} disabled={resendCD > 0 || busy} style={{ background: "transparent", border: 0, color: resendCD > 0 ? "rgba(255,255,255,0.25)" : "#38bdf8", fontSize: 12, fontWeight: 700, cursor: resendCD > 0 ? "default" : "pointer" }}>{resendCD > 0 ? `Resend in ${resendCD}s` : "Resend Code"}</button>
+
+                  {/* Resend row */}
+                  <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 12 }}>
+                    <span style={{ fontSize: 11, color: "rgba(255,255,255,0.3)" }}>Didn't receive the code?</span>
+                    <button type="button" onClick={resend} disabled={resendCD > 0 || busy} style={{ background: "transparent", border: 0, color: resendCD > 0 ? "rgba(255,255,255,0.25)" : "#38bdf8", fontSize: 11, fontWeight: 700, cursor: resendCD > 0 ? "default" : "pointer" }}>{resendCD > 0 ? `Resend in ${resendCD}s` : "Resend Code"}</button>
                   </div>
-                  <button id="reg-verify-otp" type="submit" disabled={busy || otpDigits.join("").length !== 6} style={{ ...PB, opacity: otpDigits.join("").length !== 6 ? 0.5 : 1 }}>{busy ? "Verifying…" : "VERIFY & CONTINUE TO FACE ID →"}</button>
+
+                  <button id="reg-verify-otp" type="submit" disabled={busy || otpDigits.join("").length !== 6}
+                    style={{ ...PB, opacity: otpDigits.join("").length !== 6 ? 0.45 : 1, cursor: otpDigits.join("").length !== 6 ? "not-allowed" : "pointer" }}>
+                    {busy ? "Verifying…" : otpDigits.join("").length !== 6 ? "Enter all 6 digits above first" : "VERIFY & CONTINUE TO FACE ID →"}
+                  </button>
                 </form>
               </div>
             )}
