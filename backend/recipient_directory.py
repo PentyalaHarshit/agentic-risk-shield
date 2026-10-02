@@ -8,13 +8,28 @@ from schemas.transaction import RecipientProfile
 
 
 PRESET_DIRECTORY: Dict[str, Dict] = {
+    "2145551641": {
+        "recipient_id": "REC-9102",
+        "full_name": "John Michael Smith",
+        "phone": "+1 214 555 1641",
+        "masked_phone": "+1 (214) ***-1641",
+        "email": "r.smith@gmail.com",
+        "masked_email": "r***@gmail.com",
+        "location": "Dallas, Texas",
+        "account_age_days": 20,
+        "phone_verified": True,
+        "account_verified": True,
+        "is_new_recipient": True,
+        "prior_transfers": 0,
+        "fraud_reports": 0
+    },
     "2145550192": {
         "recipient_id": "REC-9102",
         "full_name": "John Michael Smith",
         "phone": "+1 214 555 0192",
-        "masked_phone": "+1 (214) ***-0192",
-        "email": "john.smith@gmail.com",
-        "masked_email": "j***@gmail.com",
+        "masked_phone": "+1 (214) ***-1641",
+        "email": "r.smith@gmail.com",
+        "masked_email": "r***@gmail.com",
         "location": "Dallas, Texas",
         "account_age_days": 20,
         "phone_verified": True,

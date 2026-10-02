@@ -528,8 +528,14 @@ export default function App() {
                   </button>
                 )}
                 <div>
-                  <div style={{ fontSize: 11, color: "var(--accent-blue)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>
-                    QuickPay + Risk Shield
+                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                    <span style={{ fontSize: 13 }}>🛡️</span>
+                    <span style={{ fontSize: 11, color: "#fff", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      QuickPay
+                    </span>
+                    <span style={{ fontSize: 11, color: "var(--accent-blue)", fontWeight: 700, textTransform: "uppercase", letterSpacing: 0.5 }}>
+                      + Risk Shield
+                    </span>
                   </div>
                   <div style={{ fontSize: 16, fontWeight: 800, color: "#fff" }}>
                     {custStep === 1 && "Send Money"}
@@ -541,9 +547,14 @@ export default function App() {
                   </div>
                 </div>
               </div>
-              <span style={{ fontSize: 11, color: "var(--text-faint)", background: "rgba(255, 255, 255, 0.05)", padding: "3px 8px", borderRadius: 8 }}>
-                Step {custStep} of 6
-              </span>
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 3 }}>
+                <span style={{ fontSize: 11, color: "var(--text-faint)", background: "rgba(255, 255, 255, 0.05)", padding: "3px 8px", borderRadius: 8 }}>
+                  Step {custStep} of 6
+                </span>
+                <span style={{ fontSize: 10, color: "var(--text-muted)", display: "flex", alignItems: "center", gap: 4 }}>
+                  🔒 Secure • Fast • Reliable
+                </span>
+              </div>
             </div>
 
             <div style={{ padding: "20px 20px 30px" }}>
@@ -582,7 +593,7 @@ export default function App() {
                     <div style={{ display: "flex", gap: 6, marginBottom: 12 }}>
                       <button
                         type="button"
-                        onClick={() => { setSearchMode("phone"); setSearchQuery("+1 (214) 555-0192"); }}
+                        onClick={() => { setSearchMode("phone"); setSearchQuery("+1 (214) 555-1641"); }}
                         style={{
                           flex: 1,
                           padding: "6px 10px",
@@ -598,7 +609,7 @@ export default function App() {
                       </button>
                       <button
                         type="button"
-                        onClick={() => { setSearchMode("email"); setSearchQuery("john.smith@gmail.com"); }}
+                        onClick={() => { setSearchMode("email"); setSearchQuery("r.smith@gmail.com"); }}
                         style={{
                           flex: 1,
                           padding: "6px 10px",
@@ -640,7 +651,7 @@ export default function App() {
                     </div>
                     <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                       {[
-                        { name: "John Michael Smith", phone: "+1 (214) 555-0192", loc: "Dallas, TX", tag: "⚠️ New Recipient" },
+                        { name: "John Michael Smith", phone: "+1 (214) 555-1641", loc: "Dallas, TX", tag: "⚠️ New Recipient" },
                         { name: "Sarah Elizabeth Miller", phone: "+1 (415) 555-2481", loc: "San Francisco, CA", tag: "✓ Known Contact" },
                         { name: "David Alexander Vance", phone: "+1 (312) 555-8839", loc: "Chicago, IL", tag: "⚠️ High Velocity" }
                       ].map((c, i) => (
@@ -701,61 +712,112 @@ export default function App() {
               {custStep === 2 && foundRecipient && (
                 <div className="animate-fade-in">
                   <div style={{
-                    background: "rgba(255, 255, 255, 0.02)",
-                    border: "1px solid var(--border-glow)",
+                    background: "rgba(15, 23, 42, 0.75)",
+                    backdropFilter: "blur(16px)",
+                    border: "1px solid rgba(56, 189, 248, 0.28)",
                     borderRadius: "var(--radius-lg)",
-                    padding: 20,
-                    marginBottom: 20
+                    padding: "24px 20px",
+                    marginBottom: 20,
+                    boxShadow: "0 12px 32px rgba(0, 0, 0, 0.45), 0 0 25px rgba(56, 189, 248, 0.08)"
                   }}>
-                    <div style={{ textAlign: "center", marginBottom: 16 }}>
+                    <div style={{ textAlign: "center", marginBottom: 20 }}>
                       <div style={{
-                        width: 52,
-                        height: 52,
+                        width: 64,
+                        height: 64,
                         borderRadius: "50%",
-                        background: "rgba(56, 189, 248, 0.15)",
-                        border: "1px solid var(--accent-blue)",
+                        background: "linear-gradient(135deg, rgba(30, 58, 138, 0.8), rgba(56, 189, 248, 0.25))",
+                        border: "2px solid rgba(56, 189, 248, 0.6)",
                         display: "flex",
                         alignItems: "center",
                         justifyContent: "center",
-                        fontSize: 26,
-                        margin: "0 auto 10px"
+                        fontSize: 30,
+                        margin: "0 auto 12px",
+                        boxShadow: "0 0 20px rgba(56, 189, 248, 0.35)"
                       }}>
                         👤
                       </div>
-                      <h3 style={{ fontSize: 18, fontWeight: 800, color: "#fff" }}>
+                      <h3 style={{ fontSize: 20, fontWeight: 800, color: "#fff", letterSpacing: "-0.01em" }}>
                         {foundRecipient.full_name}
                       </h3>
-                      <div style={{ fontSize: 12, color: "var(--text-muted)", marginTop: 2 }}>
-                        Registered Network Recipient
+                      <div style={{ fontSize: 12, color: "var(--accent-blue)", marginTop: 4, display: "flex", alignItems: "center", justifyContent: "center", gap: 5 }}>
+                        <span>🛡️</span> Registered Network Recipient
                       </div>
                     </div>
 
-                    <div style={{ background: "rgba(0,0,0,0.3)", borderRadius: 8, padding: "12px 14px", marginBottom: 14 }}>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                        <span style={{ color: "var(--text-faint)" }}>📱 Masked Phone:</span>
-                        <span style={{ color: "#fff", fontWeight: 600 }}>{foundRecipient.masked_phone}</span>
+                    <div style={{
+                      background: "rgba(0, 0, 0, 0.35)",
+                      borderRadius: 10,
+                      padding: "14px 16px",
+                      marginBottom: 16,
+                      border: "1px solid rgba(255, 255, 255, 0.06)"
+                    }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                        <span style={{ color: "var(--text-faint)", display: "flex", alignItems: "center", gap: 6 }}>
+                          <span>📱</span> Masked Phone:
+                        </span>
+                        <span style={{ color: "#fff", fontWeight: 700, fontFamily: "var(--font-mono)" }}>
+                          {foundRecipient.masked_phone}
+                        </span>
                       </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0", borderBottom: "1px solid rgba(255,255,255,0.05)" }}>
-                        <span style={{ color: "var(--text-faint)" }}>📧 Masked Email:</span>
-                        <span style={{ color: "#fff", fontWeight: 600 }}>{foundRecipient.masked_email}</span>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "8px 0", borderBottom: "1px solid rgba(255,255,255,0.06)" }}>
+                        <span style={{ color: "var(--text-faint)", display: "flex", alignItems: "center", gap: 6 }}>
+                          <span>✉️</span> Masked Email:
+                        </span>
+                        <span style={{ color: "#fff", fontWeight: 700, fontFamily: "var(--font-mono)" }}>
+                          {foundRecipient.masked_email}
+                        </span>
                       </div>
-                      <div style={{ display: "flex", justifyContent: "space-between", fontSize: 12, padding: "4px 0" }}>
-                        <span style={{ color: "var(--text-faint)" }}>📍 Location:</span>
-                        <span style={{ color: "#fff", fontWeight: 600 }}>{foundRecipient.location}</span>
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", fontSize: 13, padding: "8px 0" }}>
+                        <span style={{ color: "var(--text-faint)", display: "flex", alignItems: "center", gap: 6 }}>
+                          <span>📍</span> Location:
+                        </span>
+                        <span style={{ color: "#fff", fontWeight: 700 }}>
+                          {foundRecipient.location}
+                        </span>
                       </div>
                     </div>
 
                     {/* Verification Status Badges */}
-                    <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
-                      <div style={{ fontSize: 11, color: "#10b981", display: "flex", alignItems: "center", gap: 6 }}>
-                        <span>✓</span> Phone matches registered network recipient
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8, marginBottom: 20 }}>
+                      <div style={{
+                        fontSize: 12,
+                        color: "#34d399",
+                        background: "rgba(16, 185, 129, 0.1)",
+                        border: "1px solid rgba(16, 185, 129, 0.25)",
+                        padding: "8px 12px",
+                        borderRadius: 8,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8
+                      }}>
+                        <span style={{ fontWeight: 800 }}>✓</span> Phone matches registered network recipient
                       </div>
-                      <div style={{ fontSize: 11, color: "#10b981", display: "flex", alignItems: "center", gap: 6 }}>
-                        <span>✓</span> Recipient bank account verified
+                      <div style={{
+                        fontSize: 12,
+                        color: "#34d399",
+                        background: "rgba(16, 185, 129, 0.1)",
+                        border: "1px solid rgba(16, 185, 129, 0.25)",
+                        padding: "8px 12px",
+                        borderRadius: 8,
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 8
+                      }}>
+                        <span style={{ fontWeight: 800 }}>✓</span> Recipient bank account verified
                       </div>
                       {foundRecipient.is_new_recipient && (
-                        <div style={{ fontSize: 11, color: "#fbbf24", display: "flex", alignItems: "center", gap: 6 }}>
-                          <span>⚠️</span> New recipient (no prior transfer history with you)
+                        <div style={{
+                          fontSize: 12,
+                          color: "#fbbf24",
+                          background: "rgba(245, 158, 11, 0.1)",
+                          border: "1px solid rgba(245, 158, 11, 0.25)",
+                          padding: "8px 12px",
+                          borderRadius: 8,
+                          display: "flex",
+                          alignItems: "center",
+                          gap: 8
+                        }}>
+                          <span style={{ fontWeight: 800 }}>⚠️</span> New recipient (no prior transfer history with you)
                         </div>
                       )}
                     </div>
@@ -765,7 +827,7 @@ export default function App() {
                       onClick={() => setCustStep(3)}
                       style={{
                         width: "100%",
-                        padding: "13px",
+                        padding: "14px",
                         background: "linear-gradient(135deg, #10b981, #059669)",
                         border: 0,
                         borderRadius: "var(--radius-md)",
@@ -773,11 +835,29 @@ export default function App() {
                         fontSize: 14,
                         fontWeight: 800,
                         cursor: "pointer",
-                        boxShadow: "0 0 15px rgba(16, 185, 129, 0.4)"
+                        boxShadow: "0 0 20px rgba(16, 185, 129, 0.35)",
+                        letterSpacing: "0.3px"
                       }}
                     >
                       [✓ THIS IS THE CORRECT PERSON]
                     </button>
+
+                    <div style={{ textAlign: "center", marginTop: 12 }}>
+                      <button
+                        type="button"
+                        onClick={() => setCustStep(1)}
+                        style={{
+                          background: "transparent",
+                          border: 0,
+                          color: "var(--text-muted)",
+                          fontSize: 12,
+                          cursor: "pointer",
+                          textDecoration: "underline"
+                        }}
+                      >
+                        ← Not the right person? Search again
+                      </button>
+                    </div>
                   </div>
                 </div>
               )}
