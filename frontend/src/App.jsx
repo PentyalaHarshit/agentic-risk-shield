@@ -51,9 +51,8 @@ const formatUSD = (val) => {
 };
 
 export default function App() {
-  // Navigation: "customer" (mobile banking view) vs "manager" (bank operations console)
+  // Navigation: "customer" (banking portal view) vs "manager" (bank operations console)
   const [activePortal, setActivePortal] = useState("customer");
-  const [useAndroidFrame, setUseAndroidFrame] = useState(true);
 
   // Customer app step:
   // 1: Search Recipient by Phone/Email
@@ -463,52 +462,20 @@ export default function App() {
       )}
 
       {/* =========================================================================
-          VIEW 1: CUSTOMER BANKING MOBILE APP (Android / Mobile Banking Simulator)
+          VIEW 1: CUSTOMER BANKING WEB PORTAL
          ========================================================================= */}
       {activePortal === "customer" && (
-        <div>
-          {/* Toggle for Android Frame */}
-          <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 12 }}>
-            <button
-              type="button"
-              onClick={() => setUseAndroidFrame(!useAndroidFrame)}
-              style={{
-                background: "rgba(255, 255, 255, 0.05)",
-                border: "1px solid var(--border-subtle)",
-                borderRadius: 16,
-                padding: "4px 12px",
-                color: "var(--text-muted)",
-                fontSize: 12,
-                cursor: "pointer"
-              }}
-            >
-              {useAndroidFrame ? "🖥️ Switch to Expanded View" : "📱 Switch to Android Frame"}
-            </button>
-          </div>
-
-          <div className={useAndroidFrame ? "android-frame" : ""} style={!useAndroidFrame ? {
-            background: "var(--bg-card)",
-            border: "1px solid var(--border-subtle)",
-            borderRadius: "var(--radius-lg)",
-            padding: 32,
-            maxWidth: 680,
-            margin: "0 auto",
-            boxShadow: "0 20px 40px rgba(0,0,0,0.5)"
-          } : {}}>
-
-            {/* Android Hardware Header Bar */}
-            {useAndroidFrame && (
-              <div>
-                <div className="android-speaker" />
-                <div className="android-camera" />
-                <div className="android-status-bar">
-                  <span>9:41</span>
-                  <span>5G 📶 100% 🔋</span>
-                </div>
-              </div>
-            )}
-
-            {/* In-App Customer Navigation Bar */}
+        <div className="animate-fade-in" style={{
+          background: "rgba(15, 23, 42, 0.85)",
+          backdropFilter: "blur(20px)",
+          border: "1px solid rgba(255, 255, 255, 0.12)",
+          borderRadius: "var(--radius-lg)",
+          maxWidth: 820,
+          margin: "0 auto",
+          boxShadow: "0 25px 60px rgba(0, 0, 0, 0.55), 0 0 35px rgba(56, 189, 248, 0.1)",
+          overflow: "hidden"
+        }}>
+          {/* In-App Customer Navigation Bar */}
             <div style={{
               padding: "16px 20px 14px",
               background: "linear-gradient(180deg, rgba(30, 41, 59, 0.9) 0%, rgba(15, 23, 42, 0.7) 100%)",
@@ -1348,10 +1315,6 @@ export default function App() {
                 </div>
               )}
             </div>
-
-            {/* Android Navigation Pill */}
-            {useAndroidFrame && <div className="android-nav-pill" />}
-          </div>
         </div>
       )}
 
