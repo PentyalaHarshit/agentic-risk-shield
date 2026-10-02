@@ -1,0 +1,9 @@
+FROM python:3.11-slim
+RUN apt-get update && apt-get install -y g++ make && rm -rf /var/lib/apt/lists/*
+WORKDIR /app
+COPY backend/requirements.txt backend/
+RUN pip install --no-cache-dir -r backend/requirements.txt
+COPY . .
+RUN make -C cpp_engine && python backend/ml/risk_model.py
+WORKDIR /app/backend
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

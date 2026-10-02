@@ -1,0 +1,10 @@
+POLICY-001 | Risk thresholds | Transactions with initial risk below 0.15 are approved directly with no extra friction. Risk between 0.15 and 0.85 requires recipient verification before the transfer can proceed. Risk above 0.85 is held for manual review.
+POLICY-002 | Recipient verification | Customers must supply recipient name, age, location, phone, relationship, history and payment reason before a high-risk transfer. Missing or evasive answers raise the risk level.
+POLICY-003 | New recipient | A recipient with no prior successful transfers and a young account requires additional verification, especially for amounts far above the customer's normal pattern.
+POLICY-004 | Urgency and pressure | Payment reasons or messages that describe urgency, secrecy, gift cards, crypto, prizes, emergencies, or requests not to tell anyone are common scam indicators and increase risk.
+POLICY-005 | Impersonation | A family member or friend asking for money from a new number or new account is a common impersonation pattern. Confirm by calling the person on a number you already know.
+POLICY-006 | Weak signals | Absence of a social profile, a different surname, or an unverified location are weak signals. They must never alone justify blocking; they only raise the score for review.
+POLICY-007 | Explanation requirement | Every hold must give the customer clear reasons, the evidence used, and next steps. The system states a risk assessment and does not accuse a person of being a scammer.
+POLICY-008 | Privacy | Communication data may only be analysed when the customer has explicitly provided it or authorised an integration. Private messaging apps are never accessed covertly.
+POLICY-009 | Investment and romance scams | Large transfers to people met online, promises of guaranteed returns, or requests to move money to crypto wallets require manual review.
+POLICY-010 | Customer next steps | Customers should verify the recipient through a trusted channel, avoid urgent pressure, and contact the bank's fraud team if unsure.
